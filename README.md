@@ -94,6 +94,58 @@ compared to prior methods such as StoryGPT-V and MovieAgent.
 
 ---
 
+## 🔌 Multi-Model Support
+
+This branch (`feat/multi-model-support`) makes every AI call pluggable per **role**:
+`TEXT` (story/characters), `IMAGE` (illustration), and `VISION` (consistency directors).
+By default everything runs on **Gemini**, preserving the original behavior 100%.
+
+You can switch **each role independently** to a domestic provider, so the whole
+pipeline runs without touching Google's API at all:
+
+```bash
+# .env.local — fully domestic, no Gemini calls
+TEXT_PROVIDER=qwen       # Alibaba Qwen (text)
+IMAGE_PROVIDER=seedream  # ByteDance Seedream (image)
+VISION_PROVIDER=qwen     # Alibaba Qwen-VL (vision/VLM judging)
+QWEN_API_KEY=your_dashscope_key
+SEEDREAM_API_KEY=your_volcengine_ark_key
+```
+
+Or switch just the image model:
+
+```bash
+# .env.local
+IMAGE_PROVIDER=seedream
+SEEDREAM_API_KEY=your_volcengine_ark_key
+```
+
+Or run **everything on Volcengine Ark** (Doubao for text/vision + Seedream for images)
+with a single API key:
+
+```bash
+# .env.local — all roles on Volcengine Ark, one key
+TEXT_PROVIDER=ark
+IMAGE_PROVIDER=ark
+VISION_PROVIDER=ark
+ARK_API_KEY=your_volcengine_ark_key
+```
+
+Or run **everything on Alibaba Bailian** (Qwen for text, Qwen-VL for vision judging,
+Tongyi Wanxiang for images — native multi-reference support) with a single API key:
+
+```bash
+# .env.local — all roles on Alibaba Bailian, one key
+TEXT_PROVIDER=bailian
+IMAGE_PROVIDER=bailian
+VISION_PROVIDER=bailian
+BAILIAN_API_KEY=your_dashscope_key
+```
+
+See [MULTI_MODEL.md](./MULTI_MODEL.md) for the architecture, CORS proxy setup, and how to add new providers.
+
+---
+
 ## 🙏 Acknowledgements
 
 We thank **Google AI Studio** for providing an intuitive platform for rapid prototyping and deployment of our interactive demo system.

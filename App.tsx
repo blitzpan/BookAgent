@@ -474,11 +474,11 @@ const handleDownloadReferenceSheets = () => {
         const chars = extractedCharactersRef.current || [];
         const ids = getPageCharacterIds(pageIndex);
 
-        // 0) STYLE reference (convention): referenceDataUrls[0] is the previous page image,
-        // used for style continuity ONLY.
-        if (pageIndex > 0 && pagesWithImages[pageIndex - 1]?.imageUrl) {
-          refs.push(pagesWithImages[pageIndex - 1].imageUrl as string);
-        }
+        // NOTE: We intentionally do NOT pass the previous page's full illustration as a
+        // style reference. Image models (e.g. qwen-image) strongly condition on a whole
+        // reference image and reproduce its characters/pose/layout, ignoring the
+        // "style only" instruction — which made page N copy page N-1. Style continuity is
+        // instead ensured by the global `style` + per-character reference sheets below.
 
         // 1) Include only the character sheets needed for THIS page.
         for (const id of ids) {
@@ -509,8 +509,7 @@ CHARACTER LOCK (must match reference sheets exactly):
 ${getCharacterLockTextForPage(i)}
 
 REFERENCE USAGE:
-- If a FIRST reference image is provided, it is the PREVIOUS PAGE image for STYLE ONLY (palette/brush/lighting). Do NOT copy characters from it.
-- All remaining reference images are CHARACTER SHEETS. Match character identity exactly.
+- All reference images are CHARACTER SHEETS. Match character identity exactly.
 
 PRIORITY: If any text conflicts with the references, follow the references for character appearance (species, fur color, clothing).
 HARD RULE: Do NOT include any recurring characters unless explicitly mentioned on this page.` + SAFETY_SUFFIX;
@@ -688,8 +687,7 @@ CHARACTER LOCK (must match reference sheets exactly):
 ${getCharacterLockTextForPage(i)}
 
 REFERENCE USAGE:
-- If a FIRST reference image is provided, it is the PREVIOUS PAGE image for STYLE ONLY (palette/brush/lighting). Do NOT copy characters from it.
-- All remaining reference images are CHARACTER SHEETS. Match character identity exactly.
+- All reference images are CHARACTER SHEETS. Match character identity exactly.
 
 PRIORITY: Follow the references for character appearance.
 HARD RULE: Do NOT include any recurring characters unless explicitly mentioned on this page.` + SAFETY_SUFFIX + `

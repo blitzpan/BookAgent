@@ -1,58 +1,20 @@
-// src/services/geminiService.ts
-import { GoogleGenAI, Type } from "@google/genai";
+// services/geminiService.ts
+//
+// 多模型改造后的"编排层"：保留原有全部导出函数签名，内部按角色（TEXT/IMAGE/VISION）
+// 选择对应的 ModelBackend（见 ./providers）。默认全 gemini，行为与原实现 100% 一致。
+//
+// 拆分分析（详见仓库 MULTI_MODEL.md）：
+//   - 文本生成（extractCharacters / refine / parse / safetyCheckText）     -> TEXT 角色
+//   - 图像生成（generateImage）                                            -> IMAGE 角色
+//   - 视觉校验（三个 Director + safetyCheckImage，需要看图）               -> VISION 角色
+// 三类彼此独立，可分别指定不同 provider；一致性由 L1 文本锁 + L2 多参考图 + L4 校验闭环保证，
+// 与具体厂商无关，故拆分不影响一致性核心。
+
+import { Type } from "@google/genai";
 import type { StoryPage } from "../types";
-
-if (!process.env.API_KEY) {
-  console.warn(
-    "API_KEY environment variable not set. Using fallback_api_key_for_dev."
-  );
-}
-
-const ai = new GoogleGenAI({
-  apiKey: process.env.API_KEY || "fallback_api_key_for_dev",
-});
-
-/**
- * 这里的 model id 需要google AI studio的真实名字：
- *   - 文本/多模态内容（refine、分页、director）用 Gemini 3.0
- *   - 图片生成用 Nano Banana
- */
-const TEXT_MODEL = "gemini-3-pro-preview";
-const VISION_MODEL = "gemini-3-pro-preview";
-const IMAGE_MODEL = "gemini-3-pro-image-preview"; 
-
-// ============ 工具函数 ============
-
-// 前端 File -> inlineData（上传灵感图用）
-const fileToGenerativePart = async (file: File) => {
-  const base64EncodedDataPromise = new Promise<string>((resolve) => {
-    const reader = new FileReader();
-    reader.onloadend = () =>
-      resolve((reader.result as string).split(",")[1]);
-    reader.readAsDataURL(file);
-  });
-
-  return {
-    inlineData: {
-      data: await base64EncodedDataPromise,
-      mimeType: file.type,
-    },
-  };
-};
-
-// dataURL -> inlineData（给 director 看已经生成好的 PNG）
-const dataUrlToInlineImagePart = (dataUrl: string) => {
-  const [header, base64] = dataUrl.split(",");
-  const mimeMatch = /data:(.*?);base64/.exec(header);
-  const mimeType = mimeMatch?.[1] ?? "image/png";
-
-  return {
-    inlineData: {
-      data: base64,
-      mimeType,
-    },
-  };
-};
+import { getTextBackend, getImageBackend, getVisionBackend } from "./providers";
+import { fileToGenerativePart, dataUrlToInlineImagePart } from "./providers/util";
+import type { Part } from "./providers/types";
 
 // ============ 0. Character Definition (for consistency) ============
 export interface ExtractedCharacter {
@@ -78,8 +40,6 @@ export const extractCharacters = async (
   style: string
 ): Promise<ExtractedCharacter[]> => {
   try {
-    const model = TEXT_MODEL;
-
     const systemInstruction = `You extract ALL RECURRING characters from a children's picture-book story for illustration consistency.
 Return up to FIVE recurring characters (max 5). If there are more, merge or omit minor one-off characters.
 For each character, return:
@@ -92,34 +52,30 @@ Return ONLY JSON that matches the schema.`;
 
     const userPrompt = `STORY:\n${story}\n\nExtract up to 5 recurring characters (max 5). Prefer characters that persist across multiple pages.`;
 
-    const response = await ai.models.generateContent({
-      model,
-      contents: [{ text: userPrompt }],
-      config: {
-        systemInstruction,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            characters: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  id: { type: Type.STRING },
-                  name: { type: Type.STRING },
-                  visualDescription: { type: Type.STRING },
-                },
-                required: ["id", "name", "visualDescription"],
+    const json = await getTextBackend().generateJSON({
+      systemInstruction,
+      parts: [{ text: userPrompt }],
+      schema: {
+        type: Type.OBJECT,
+        properties: {
+          characters: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                id: { type: Type.STRING },
+                name: { type: Type.STRING },
+                visualDescription: { type: Type.STRING },
               },
+              required: ["id", "name", "visualDescription"],
             },
           },
-          required: ["characters"],
         },
+        required: ["characters"],
       },
+      role: "text",
     });
 
-    const json = JSON.parse(response.text);
     const chars = Array.isArray(json.characters) ? json.characters : [];
 
     const cleaned: ExtractedCharacter[] = chars
@@ -156,7 +112,6 @@ export const refineStoryForPageCount = async (
   feedback: string;
 }> => {
   try {
-    const model = TEXT_MODEL;
     const safePageCount = Math.min(Math.max(targetPageCount, 1), 20);
 
     const approxWordsPerPage = 90;
@@ -210,37 +165,32 @@ If not, REWRITE it more strongly ("rewrite") as described.
 USER STORY:
 "${story}"`;
 
-    const response = await ai.models.generateContent({
-      model,
-      contents: [{ text: userPrompt }],
-      config: {
-        systemInstruction,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            mode: {
-              type: Type.STRING,
-              description:
-                '"good_polish" if the story was already good and only lightly edited; "rewrite" if a stronger rewrite was done.',
-            },
-            feedback: {
-              type: Type.STRING,
-              description:
-                "Short natural language feedback explaining the decision and what was changed.",
-            },
-            finalStory: {
-              type: Type.STRING,
-              description:
-                "The refined story text that should be used for later page splitting.",
-            },
+    const json = await getTextBackend().generateJSON({
+      systemInstruction,
+      parts: [{ text: userPrompt }],
+      schema: {
+        type: Type.OBJECT,
+        properties: {
+          mode: {
+            type: Type.STRING,
+            description:
+              '"good_polish" if the story was already good and only lightly edited; "rewrite" if a stronger rewrite was done.',
           },
-          required: ["mode", "feedback", "finalStory"],
+          feedback: {
+            type: Type.STRING,
+            description:
+              "Short natural language feedback explaining the decision and what was changed.",
+          },
+          finalStory: {
+            type: Type.STRING,
+            description:
+              "The refined story text that should be used for later page splitting.",
+          },
         },
+        required: ["mode", "feedback", "finalStory"],
       },
+      role: "text",
     });
-
-    const json = JSON.parse(response.text);
 
     const mode: "good_polish" | "rewrite" =
       json.mode === "rewrite" ? "rewrite" : "good_polish";
@@ -269,7 +219,6 @@ export const parseStoryIntoPages = async (
   style: string = "whimsical, cute, children's picture-book style"
 ): Promise<Omit<StoryPage, "imageUrl">[]> => {
   try {
-    const model = TEXT_MODEL;
     const safePageCount = Math.min(Math.max(targetPageCount, 1), 20);
 
     const systemInstruction = `You are a creative assistant that helps users turn stories into beautifully illustrated cartoon storybooks for children. 
@@ -296,57 +245,50 @@ Return ONLY valid JSON that matches the provided response schema. Do NOT include
 For each page, output pageNumber, text, and imagePrompt in the style "${style}". Story:
 "${story}".`;
 
-    const parts: (
-      | { text: string }
-      | { inlineData: { data: string; mimeType: string } }
-    )[] = [{ text: textPrompt }];
+    const parts: Part[] = [{ text: textPrompt }];
 
     if (imageFile) {
       const imagePart = await fileToGenerativePart(imageFile);
-      parts.unshift(imagePart);
+      parts.unshift(imagePart as Part);
     }
 
-    const response = await ai.models.generateContent({
-      model,
-      contents: { parts },
-      config: {
-        systemInstruction,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            pages: {
-              type: Type.ARRAY,
-              description: `An array of story pages, exactly ${safePageCount} pages long.`,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  pageNumber: {
-                    type: Type.INTEGER,
-                    description:
-                      "The sequential page number, starting from 1.",
-                  },
-                  text: {
-                    type: Type.STRING,
-                    description:
-                      "The segment of the story for this specific page.",
-                  },
-                  imagePrompt: {
-                    type: Type.STRING,
-                    description:
-                      "A detailed prompt for an image generation AI, in the chosen cartoon style.",
-                  },
+    const jsonResponse = await getTextBackend().generateJSON({
+      systemInstruction,
+      parts,
+      schema: {
+        type: Type.OBJECT,
+        properties: {
+          pages: {
+            type: Type.ARRAY,
+            description: `An array of story pages, exactly ${safePageCount} pages long.`,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                pageNumber: {
+                  type: Type.INTEGER,
+                  description:
+                    "The sequential page number, starting from 1.",
                 },
-                required: ["pageNumber", "text", "imagePrompt"],
+                text: {
+                  type: Type.STRING,
+                  description:
+                    "The segment of the story for this specific page.",
+                },
+                imagePrompt: {
+                  type: Type.STRING,
+                  description:
+                    "A detailed prompt for an image generation AI, in the chosen cartoon style.",
+                },
               },
+              required: ["pageNumber", "text", "imagePrompt"],
             },
           },
-          required: ["pages"],
         },
+        required: ["pages"],
       },
+      role: "text",
     });
 
-    const jsonResponse = JSON.parse(response.text);
     if (!jsonResponse.pages || !Array.isArray(jsonResponse.pages)) {
       throw new Error("Invalid response format from story parsing API.");
     }
@@ -360,7 +302,7 @@ For each page, output pageNumber, text, and imagePrompt in the style "${style}".
   }
 };
 
-// ============ 3. 两个 Director（多模态监制）===========
+// ============ 3. 两个 Director（多模态监制）============
 
 export interface DirectorFrameResult {
   pageNumber: number;
@@ -399,8 +341,6 @@ export const directorCheckFrame = async (
   }
 
   try {
-    const model = VISION_MODEL;
-
     const imagePart = dataUrlToInlineImagePart(page.imageUrl);
     const userText = `You are the FRAME DIRECTOR for a children's picture-book production.
 
@@ -426,29 +366,23 @@ Return ONLY JSON with:
 - "score": number
 - "issues": array of short strings (empty if acceptable).`;
 
-    const response = await ai.models.generateContent({
-      model,
-      contents: {
-        parts: [imagePart, { text: userText }],
-      },
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            isAcceptable: { type: Type.BOOLEAN },
-            score: { type: Type.NUMBER },
-            issues: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING },
-            },
+    const json = await getVisionBackend().generateJSON({
+      parts: [imagePart as Part, { text: userText }],
+      schema: {
+        type: Type.OBJECT,
+        properties: {
+          isAcceptable: { type: Type.BOOLEAN },
+          score: { type: Type.NUMBER },
+          issues: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING },
           },
-          required: ["isAcceptable", "score", "issues"],
         },
+        required: ["isAcceptable", "score", "issues"],
       },
+      role: "vision",
     });
 
-    const json = JSON.parse(response.text);
     return {
       pageNumber: page.pageNumber,
       isAcceptable: Boolean(json.isAcceptable),
@@ -468,11 +402,6 @@ Return ONLY JSON with:
   }
 };
 
-/**
- * Identity/consistency check against reference character sheets (and optional group sheet).
- * This is used in the per-page loop to prevent drift (e.g., fur color changes) even when
- * the image roughly matches the text.
- */
 export const directorCheckIdentity = async (
   args: {
     pageNumber: number;
@@ -487,12 +416,7 @@ export const directorCheckIdentity = async (
   }
 ): Promise<DirectorIdentityResult> => {
   try {
-    const model = VISION_MODEL;
-
-    const parts: (
-      | { text: string }
-      | { inlineData: { data: string; mimeType: string } }
-    )[] = [];
+    const parts: Part[] = [];
 
     parts.push({
       text:
@@ -516,36 +440,32 @@ export const directorCheckIdentity = async (
       parts.push({
         text: `REFERENCE SHEET — ${ch.name}\nExpected visual traits: ${ch.visualDescription}\nImage:`,
       });
-      parts.push(dataUrlToInlineImagePart(ch.dataUrl));
+      parts.push(dataUrlToInlineImagePart(ch.dataUrl) as Part);
     }
 
     if (args.groupSheetDataUrl) {
       parts.push({ text: `REFERENCE GROUP SHEET (all characters together):` });
-      parts.push(dataUrlToInlineImagePart(args.groupSheetDataUrl));
+      parts.push(dataUrlToInlineImagePart(args.groupSheetDataUrl) as Part);
     }
 
     // Generated image
     parts.push({ text: `GENERATED PAGE IMAGE (evaluate identity vs references):` });
-    parts.push(dataUrlToInlineImagePart(args.generatedImageUrl));
+    parts.push(dataUrlToInlineImagePart(args.generatedImageUrl) as Part);
 
-    const response = await ai.models.generateContent({
-      model,
-      contents: { parts },
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            isConsistent: { type: Type.BOOLEAN },
-            score: { type: Type.NUMBER },
-            issues: { type: Type.ARRAY, items: { type: Type.STRING } },
-          },
-          required: ["isConsistent", "score", "issues"],
+    const json = await getVisionBackend().generateJSON({
+      parts,
+      schema: {
+        type: Type.OBJECT,
+        properties: {
+          isConsistent: { type: Type.BOOLEAN },
+          score: { type: Type.NUMBER },
+          issues: { type: Type.ARRAY, items: { type: Type.STRING } },
         },
+        required: ["isConsistent", "score", "issues"],
       },
+      role: "vision",
     });
 
-    const json = JSON.parse(response.text);
     return {
       isConsistent: Boolean(json.isConsistent),
       score: Number(json.score ?? 0),
@@ -569,19 +489,14 @@ export const directorCheckSequence = async (
   style: string
 ): Promise<DirectorSequenceResult> => {
   try {
-    const model = VISION_MODEL;
-
-    const parts: (
-      | { text: string }
-      | { inlineData: { data: string; mimeType: string } }
-    )[] = [];
+    const parts: Part[] = [];
 
     for (const page of pages) {
       if (!page.imageUrl) continue;
       parts.push({
         text: `PAGE ${page.pageNumber} TEXT:\n"${page.text}"\nNow see its image:`,
       });
-      parts.push(dataUrlToInlineImagePart(page.imageUrl));
+      parts.push(dataUrlToInlineImagePart(page.imageUrl) as Part);
     }
 
     const systemInstruction = `You are the SEQUENCE DIRECTOR for a children's picture-book production.
@@ -614,41 +529,35 @@ Return ONLY JSON with:
 - "issues": array of short strings describing the main continuity problems (empty if consistent).
 - "problemPages": array of page numbers that most likely need repair (empty if consistent).`;
 
-    const response = await ai.models.generateContent({
-      model,
-      contents: {
-        parts: [
-          {
-            text: `Global target style (for reference): ${style}\n\nNow evaluate the following sequence of pages:`,
-          },
-          ...parts,
-        ],
-      },
-      config: {
-        systemInstruction,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            isConsistent: { type: Type.BOOLEAN },
-            score: { type: Type.NUMBER },
-            issues: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING },
-            },
-            problemPages: {
-              type: Type.ARRAY,
-              items: { type: Type.INTEGER },
-              description:
-                "Page numbers that most likely need repair for consistency (use existing page numbers).",
-            },
-          },
-          required: ["isConsistent", "score", "issues"],
+    const json = await getVisionBackend().generateJSON({
+      systemInstruction,
+      parts: [
+        {
+          text: `Global target style (for reference): ${style}\n\nNow evaluate the following sequence of pages:`,
         },
+        ...parts,
+      ],
+      schema: {
+        type: Type.OBJECT,
+        properties: {
+          isConsistent: { type: Type.BOOLEAN },
+          score: { type: Type.NUMBER },
+          issues: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING },
+          },
+          problemPages: {
+            type: Type.ARRAY,
+            items: { type: Type.INTEGER },
+            description:
+              "Page numbers that most likely need repair for consistency (use existing page numbers).",
+          },
+        },
+        required: ["isConsistent", "score", "issues"],
       },
+      role: "vision",
     });
 
-    const json = JSON.parse(response.text);
     return {
       isConsistent: Boolean(json.isConsistent),
       score: Number(json.score ?? 0),
@@ -685,18 +594,11 @@ export interface SafetyImageResult {
   reasons: string[];
 }
 
-/**
- * Text safety check for children's content.
- * - check: returns isSafe/reasons
- * - sanitize: rewrites the text to be safe (keeps plot as much as possible)
- */
 export const safetyCheckText = async (
   input: string,
   mode: "check" | "sanitize" = "check"
 ): Promise<SafetyTextResult> => {
   try {
-    const model = TEXT_MODEL;
-
     const systemInstruction = `You are a strict safety checker for CHILDREN'S storybooks.
 Flag and reject any: sexual content, nudity, erotic/suggestive themes, sexualization of minors, adult romance themes.
 Also flag: graphic violence/gore, hate/harassment, instructions for wrongdoing.
@@ -713,25 +615,21 @@ Remove/replace unsafe content. Output sanitizedText.
 
 TEXT:\n${input}`;
 
-    const response = await ai.models.generateContent({
-      model,
-      contents: [{ text: userText }],
-      config: {
-        systemInstruction,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            isSafe: { type: Type.BOOLEAN },
-            reasons: { type: Type.ARRAY, items: { type: Type.STRING } },
-            sanitizedText: { type: Type.STRING },
-          },
-          required: ["isSafe", "reasons"],
+    const json = await getTextBackend().generateJSON({
+      systemInstruction,
+      parts: [{ text: userText }],
+      schema: {
+        type: Type.OBJECT,
+        properties: {
+          isSafe: { type: Type.BOOLEAN },
+          reasons: { type: Type.ARRAY, items: { type: Type.STRING } },
+          sanitizedText: { type: Type.STRING },
         },
+        required: ["isSafe", "reasons"],
       },
+      role: "text",
     });
 
-    const json = JSON.parse(response.text);
     return {
       isSafe: Boolean(json.isSafe),
       reasons: Array.isArray(json.reasons)
@@ -747,15 +645,10 @@ TEXT:\n${input}`;
   }
 };
 
-/**
- * Image safety check (expects a dataURL like data:image/png;base64,...)
- */
 export const safetyCheckImage = async (
   imageDataUrl: string
 ): Promise<SafetyImageResult> => {
   try {
-    const model = VISION_MODEL;
-
     const systemInstruction = `You are a strict safety checker for CHILDREN'S illustrations.
 Flag and reject any: nudity, sexual content, suggestive depiction, sexualization of minors, adult/erotic themes.
 Also flag: graphic violence/gore, hate symbols.
@@ -763,26 +656,20 @@ Return ONLY JSON.`;
 
     const imagePart = dataUrlToInlineImagePart(imageDataUrl);
 
-    const response = await ai.models.generateContent({
-      model,
-      contents: {
-        parts: [imagePart, { text: "Is this image safe for children? Return JSON." }],
-      },
-      config: {
-        systemInstruction,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            isSafe: { type: Type.BOOLEAN },
-            reasons: { type: Type.ARRAY, items: { type: Type.STRING } },
-          },
-          required: ["isSafe", "reasons"],
+    const json = await getVisionBackend().generateJSON({
+      systemInstruction,
+      parts: [imagePart as Part, { text: "Is this image safe for children? Return JSON." }],
+      schema: {
+        type: Type.OBJECT,
+        properties: {
+          isSafe: { type: Type.BOOLEAN },
+          reasons: { type: Type.ARRAY, items: { type: Type.STRING } },
         },
+        required: ["isSafe", "reasons"],
       },
+      role: "vision",
     });
 
-    const json = JSON.parse(response.text);
     return {
       isSafe: Boolean(json.isSafe),
       reasons: Array.isArray(json.reasons)
@@ -795,93 +682,23 @@ Return ONLY JSON.`;
   }
 };
 
-// ============ 4. 图片生成（Nano Banana Pro）===========
+// ============ 4. 图片生成（多参考图，可插拔后端）============
 
 export const generateImage = async (
   prompt: string,
   referenceDataUrls: string[] = []
 ): Promise<string> => {
-  // IMPORTANT CONVENTION (for consistency):
-  // - referenceDataUrls[0] (if present) is a STYLE reference image (e.g., previous page image).
-  // - referenceDataUrls[1..] are CHARACTER reference sheets.
-  // We must explicitly tell the model how to use them; otherwise it may mix roles and drift.
+  // 约定（一致性相关）：referenceDataUrls[0] 为风格参考，[1..] 为角色锚图。
+  // 具体如何把参考图喂给模型、以及 REFERENCE ROLES prompt 的组装，由各后端实现。
+  const backend = getImageBackend();
+  const capped = (referenceDataUrls || [])
+    .filter(Boolean)
+    .slice(0, backend.maxRefs);
 
-  const cleanedRefs = referenceDataUrls.filter(Boolean).slice(0, 14);
-  const styleRef = cleanedRefs.length > 0 ? cleanedRefs[0] : null;
-  const characterRefs = cleanedRefs.length > 1 ? cleanedRefs.slice(1) : [];
-
-  const fullPrompt =
-    `REFERENCE ROLES (must follow):\n` +
-    `- The FIRST reference image is STYLE ONLY (palette/brush/texture/lighting). Do NOT copy character identity from it.\n` +
-    `- All remaining reference images are CHARACTER SHEETS. You MUST match their species, fur/skin colors, clothing, and accessories exactly.\n` +
-    `- If the story text conflicts with the refs, keep character appearance consistent with the CHARACTER SHEETS.\n\n` +
-    `${prompt}\n` +
-    `IMPORTANT: Follow the page text literally. Do not invent extra major objects or characters.\n`;
-
-  const parts: any[] = [];
-  if (styleRef) {
-    parts.push({ text: "[STYLE REFERENCE IMAGE — style only]" });
-    parts.push(dataUrlToInlineImagePart(styleRef));
-  }
-  if (characterRefs.length) {
-    parts.push({ text: "[CHARACTER REFERENCE IMAGES — match identity exactly]" });
-    for (const d of characterRefs) parts.push(dataUrlToInlineImagePart(d));
-  }
-  parts.push({ text: fullPrompt });
-
-  try {
-    const response = await ai.models.generateContent({
-      model: IMAGE_MODEL,
-      contents: parts,
-      config: {
-        responseModalities: ["Image"],
-        imageConfig: {
-          aspectRatio: "4:3",
-          imageSize: "2K",
-        },
-      },
-    });
-
-    const respParts = response?.candidates?.[0]?.content?.parts ?? [];
-    const imgPart = respParts.find((p: any) => p.inlineData?.data);
-
-    if (!imgPart) {
-      throw new Error(`No inline image data in response. parts=${JSON.stringify(parts)}`);
-    }
-
-    const b64 = imgPart.inlineData.data as string;
-    const mime = imgPart.inlineData.mimeType || "image/png";
-    return `data:${mime};base64,${b64}`;
-  } catch (error: any) {
-    // Backward-compatible fallback: if no refs provided, try generateImages (older path).
-    if (cleanedRefs.length === 0) {
-      try {
-        const response = await ai.models.generateImages({
-          model: IMAGE_MODEL,
-          // Keep this path minimal; style should be specified in `prompt`.
-          prompt: `${prompt}`,
-          config: {
-            numberOfImages: 1,
-            outputMimeType: "image/png",
-            aspectRatio: "4:3",
-          },
-        });
-
-        if (response.generatedImages && response.generatedImages.length > 0) {
-          const base64ImageBytes: string = response.generatedImages[0].image.imageBytes;
-          return `data:image/png;base64,${base64ImageBytes}`;
-        }
-      } catch (e2) {
-        // fallthrough to throw below
-      }
-    }
-
-    console.error("Error generating image:", error);
-    const msg =
-      error?.message ||
-      (typeof error === "string" ? error : JSON.stringify(error));
-    throw new Error(
-      `Failed to generate an illustration.\nModel: ${IMAGE_MODEL}\nReason: ${msg}`
-    );
-  }
+  return backend.generateImage({
+    prompt,
+    referenceDataUrls: capped,
+    aspectRatio: "4:3",
+    imageSize: "2K",
+  });
 };

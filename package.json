@@ -2,6 +2,14 @@
   "name": "ai-cartoon-storybook-generator",
   "private": true,
   "version": "0.0.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/blitzpan/BookAgent.git"
+  },
+  "bugs": {
+    "url": "https://github.com/blitzpan/BookAgent/issues"
+  },
+  "homepage": "https://github.com/blitzpan/BookAgent#readme",
   "type": "module",
   "scripts": {
     "dev": "vite",
