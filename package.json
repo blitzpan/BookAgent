@@ -1,30 +1,11 @@
 {
-  "name": "ai-cartoon-storybook-generator",
+  "name": "bookagent",
   "private": true,
-  "version": "0.0.0",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/blitzpan/BookAgent.git"
-  },
-  "bugs": {
-    "url": "https://github.com/blitzpan/BookAgent/issues"
-  },
-  "homepage": "https://github.com/blitzpan/BookAgent#readme",
-  "type": "module",
+  "version": "0.1.0",
+  "description": "BookAgent monorepo: backend/ (Fastify + SQLite 生图服务) + frontend/ (React 管理壳)",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "@google/genai": "^1.28.0",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0"
-  },
-  "devDependencies": {
-    "@types/node": "^22.14.0",
-    "@vitejs/plugin-react": "^5.0.0",
-    "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "install:all": "npm --prefix backend install && npm --prefix frontend install"
   }
 }
