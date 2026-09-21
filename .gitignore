@@ -36,3 +36,8 @@ backend/data
 # Dev run logs (stray)
 dev.err
 dev.out
+
+# e2e 运行时生成的 seed（含 storyId，按需重建，勿提交）
+e2e/seed.json
+pw-install.log
+pw-install.err

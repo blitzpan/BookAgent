@@ -131,12 +131,11 @@ export async function rewriteStory(storyId: number): Promise<RewriteResult> {
     // 落库：先清旧 pages，再写新的
     const tx = db.transaction(() => {
       db.prepare(`DELETE FROM pages WHERE story_id = ?`).run(storyId);
-      const ins = db.prepare(
-        `INSERT INTO pages (story_id, page_number, text_en, image_prompt)
-         VALUES (?, ?, ?, ?)`
-      );
       for (const p of parsedPages) {
-        ins.run(storyId, p.pageNumber, p.text, p.imagePrompt);
+        db.prepare(
+          `INSERT INTO pages (story_id, page_number, text_en, image_prompt)
+           VALUES (?, ?, ?, ?)`
+        ).run(storyId, p.pageNumber, p.text, p.imagePrompt);
       }
       db.prepare(
         `UPDATE stories
@@ -179,22 +178,21 @@ export function getStoryRaw(id: number): Story | undefined {
     | undefined;
 }
 
-export function listStories(): Array<{
+export function listStories(status?: string): Array<{
   id: number;
   user_title: string | null;
   status: string;
   page_count: number;
   created_at: string | null;
 }> {
-  return db
-    .prepare(
-      `SELECT s.id, s.user_title, s.status, s.created_at,
-              (SELECT COUNT(*) FROM pages p WHERE p.story_id = s.id) AS page_count
-       FROM stories s
-       WHERE s.deleted_at IS NULL
-       ORDER BY s.updated_at DESC, s.id DESC`
-    )
-    .all() as any[];
+  // 已发布过滤：reader 书架只请求 status='审批通过的作品'，避免草稿外泄。
+  // 无参时行为不变（管理壳兼容）。
+  const sql = `SELECT s.id, s.user_title, s.status, s.created_at,
+                      (SELECT COUNT(*) FROM pages p WHERE p.story_id = s.id) AS page_count
+               FROM stories s
+               WHERE s.deleted_at IS NULL${status ? " AND s.status = ?" : ""}
+               ORDER BY s.updated_at DESC, s.id DESC`;
+  return (status ? db.prepare(sql).all(status) : db.prepare(sql).all()) as any[];
 }
 
 export function getStoryDetail(id: number): {

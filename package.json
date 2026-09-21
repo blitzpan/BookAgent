@@ -2,10 +2,16 @@
   "name": "bookagent",
   "private": true,
   "version": "0.1.0",
-  "description": "BookAgent monorepo: backend/ (Fastify + SQLite 生图服务) + frontend/ (React 管理壳)",
+  "description": "BookAgent monorepo: backend/ (Fastify + SQLite 生图服务) + frontend/ (React 管理壳) + reader/ (只读阅读端)",
   "scripts": {
     "dev:backend": "npm --prefix backend run dev",
     "dev:frontend": "npm --prefix frontend run dev",
-    "install:all": "npm --prefix backend install && npm --prefix frontend install"
+    "dev:reader": "npm --prefix reader run dev",
+    "install:all": "npm --prefix backend install && npm --prefix frontend install && npm --prefix reader install",
+    "test:backend": "npm --prefix backend run test",
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0"
   }
 }

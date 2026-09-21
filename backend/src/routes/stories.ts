@@ -45,9 +45,10 @@ export function registerStoryRoutes(app: FastifyInstance): void {
     }
   });
 
-  // 列表
-  app.get("/api/stories", async () => {
-    return { stories: listStories() };
+  // 列表（支持 ?status= 已发布过滤；无参返回全部未删除，兼容管理壳）
+  app.get("/api/stories", async (req) => {
+    const status = (req.query as any)?.status as string | undefined;
+    return { stories: listStories(status) };
   });
 
   // 详情
