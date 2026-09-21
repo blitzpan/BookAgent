@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BookAgent 绘本工作台</title>
+    <style>
+      :root { --p: #6366f1; --bg: #f8fafc; --card:#fff; --bd:#e2e8f0; --muted:#64748b; }
+      * { box-sizing: border-box; }
+      body { margin:0; font-family: system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif; background:var(--bg); color:#0f172a; }
+      header { padding:16px 24px; background:#fff; border-bottom:1px solid var(--bd); display:flex; align-items:center; gap:12px; }
+      header h1 { font-size:18px; margin:0; }
+      main { padding:24px; max-width:1100px; margin:0 auto; }
+      button { cursor:pointer; border:none; border-radius:8px; padding:8px 14px; font-size:14px; background:var(--p); color:#fff; }
+      button.ghost { background:#eef2ff; color:var(--p); }
+      button.danger { background:#ef4444; }
+      button:disabled { opacity:.5; cursor:not-allowed; }
+      input, textarea, select { width:100%; padding:8px 10px; border:1px solid var(--bd); border-radius:8px; font-size:14px; }
+      .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+      .grid { display:grid; gap:16px; }
+      .cards { grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); }
+      .card { background:var(--card); border:1px solid var(--bd); border-radius:12px; padding:14px; }
+      .muted { color:var(--muted); font-size:13px; }
+      .pill { display:inline-block; font-size:12px; padding:2px 8px; border-radius:999px; background:#eef2ff; color:var(--p); }
+      .pages { grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); }
+      .page img { width:100%; aspect-ratio:4/3; object-fit:cover; border-radius:8px; background:#e2e8f0; }
+      .thumbs { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
+      .thumbs img { width:56px; height:42px; object-fit:cover; border-radius:6px; border:2px solid transparent; }
+      .thumbs img.default { border-color:var(--p); }
+      section { margin-bottom:28px; }
+      h2 { font-size:16px; margin:0 0 10px; }
+      .anchor img { width:120px; height:90px; object-fit:cover; border-radius:8px; border:1px solid var(--bd); }
+      pre { white-space:pre-wrap; background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; max-height:240px; overflow:auto; font-size:12px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <button class="ghost" id="back" style="display:none">← 返回</button>
+      <h1>BookAgent 绘本工作台</h1>
+    </header>
+    <main id="app"></main>
+
+    <script>
+      const app = document.getElementById("app");
+      const backBtn = document.getElementById("back");
+      const STATUS_ZH = {
+        "新建":"新建","AI改写中":"AI改写中","改写完成待生图":"改写完成待生图",
+        "生图中":"生图中","生图完成待审批":"生图完成待审批","生图部分失败":"生图部分失败",
+        "待审批发行":"待审批发行","审批通过的作品":"已发布","删除":"删除"
+      };
+      const api = (p, opt) => fetch("/api" + p, opt).then(async r => {
+        const t = await r.text(); const j = t ? JSON.parse(t) : {};
+        if (!r.ok) throw new Error(j.error || (r.status + "")); return j;
+      });
+      const esc = (s="") => String(s).replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+
+      backBtn.onclick = () => { backBtn.style.display="none"; listView(); };
+
+      async function listView() {
+        const { stories } = await api("/stories");
+        app.innerHTML = `
+          <section>
+            <h2>新建故事</h2>
+            <div class="card">
+              <textarea id="ot" rows="5" placeholder="输入故事原文…"></textarea>
+              <div class="row" style="margin-top:8px">
+                <input id="ut" placeholder="标题(可选)" style="max-width:200px" />
+                <input id="pc" type="number" min="1" max="20" value="6" style="max-width:90px" title="目标页数" />
+                <input id="st" placeholder="画风(可选)" style="max-width:260px" />
+              </div>
+              <div class="row" style="margin-top:8px">
+                <input id="img" type="file" accept="image/*" />
+                <button id="create">创建</button>
+              </div>
+              <div id="cmsg" class="muted"></div>
+            </div>
+          </section>
+          <section>
+            <h2>故事列表</h2>
+            <div class="grid cards" id="list"></div>
+          </section>`;
+        document.getElementById("create").onclick = async () => {
+          const ot = document.getElementById("ot").value.trim();
+          if (!ot) return (document.getElementById("cmsg").textContent = "原文不能为空");
+          let inspiration_image = null;
+          const f = document.getElementById("img").files[0];
+          if (f) inspiration_image = await new Promise(res => { const r=new FileReader(); r.onload=()=>res(r.result); r.readAsDataURL(f); });
+          try {
+            await api("/stories", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({
+              original_text: ot, user_title: document.getElementById("ut").value,
+              target_page_count: +document.getElementById("pc").value, style: document.getElementById("st").value, inspiration_image
+            })});
+            document.getElementById("cmsg").textContent = "已创建"; listView();
+          } catch(e) { document.getElementById("cmsg").textContent = "错误: " + e.message; }
+        };
+        const list = document.getElementById("list");
+        if (!stories.length) list.innerHTML = `<div class="muted">还没有故事，先创建一个吧。</div>`;
+        for (const s of stories) {
+          const d = document.createElement("div"); d.className="card";
+          d.innerHTML = `<div class="row" style="justify-content:space-between">
+              <strong>${esc(s.user_title || ("#"+s.id))}</strong>
+              <span class="pill">${STATUS_ZH[s.status] || s.status}</span></div>
+            <div class="muted" style="margin:6px 0">${s.page_count} 页 · ${esc(s.created_at||"")}</div>
+            <button data-id="${s.id}">打开</button>`;
+          d.querySelector("button").onclick = () => { backBtn.style.display="inline-block"; detailView(s.id); };
+          list.appendChild(d);
+        }
+      }
+
+      let pollTimer = null;
+      async function detailView(id) {
+        if (pollTimer) { clearInterval(pollTimer); pollTimer=null; }
+        const { story, pages } = await api("/stories/" + id);
+        const { runs } = await api("/stories/" + id + "/runs");
+        const latestRun = runs[0];
+        let anchors = [];
+        if (latestRun) { const rd = await api("/runs/" + latestRun.id); anchors = rd.characters || []; }
+
+        app.innerHTML = `
+          <section><div class="row" style="justify-content:space-between">
+            <div><strong style="font-size:18px">${esc(story.user_title || ("#"+story.id))}</strong>
+              <span class="pill" style="margin-left:8px">${STATUS_ZH[story.status]||story.status}</span></div>
+            <div class="row">
+              <button class="ghost" id="rw">改写</button>
+              <button id="gen">生图</button>
+              <button class="ghost" id="pub">发布</button>
+              <button class="ghost" id="redraw">重画全部</button>
+              <button class="danger" id="del">删除</button>
+            </div></div>
+            <div class="muted" style="margin-top:8px">画风: ${esc(story.style||"默认")} · 状态: ${esc(story.status)}</div>
+            <div id="msg" class="muted"></div>
+          </section>
+
+          <section><h2>页面</h2><div class="grid pages" id="pages"></div></section>
+
+          <section><h2>角色锚图（一致性参考）</h2><div class="row" id="anchors"></div></section>
+
+          <section><h2>生成任务</h2><div id="runs" class="muted"></div></section>`;
+
+        const setMsg = m => document.getElementById("msg").textContent = m;
+
+        document.getElementById("rw").onclick = async () => {
+          setMsg("改写中…"); try { await api("/stories/"+id+"/rewrite",{method:"POST"}); setMsg("改写完成"); detailView(id); }
+          catch(e){ setMsg("改写失败: "+e.message); }
+        };
+        document.getElementById("gen").onclick = async () => {
+          try { const { runId } = await api("/stories/"+id+"/generate",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+            setMsg("已提交生图任务 #"+runId+"，正在轮询…"); poll(id, runId); } catch(e){ setMsg("生图提交失败: "+e.message); }
+        };
+        document.getElementById("pub").onclick = async () => {
+          try { await api("/stories/"+id+"/publish",{method:"POST"}); setMsg("已发布"); detailView(id); }
+          catch(e){ setMsg("发布失败: "+e.message); }
+        };
+        document.getElementById("del").onclick = async () => {
+          if(!confirm("确认删除该故事？")) return; await api("/stories/"+id,{method:"DELETE"}); backBtn.click();
+        };
+        document.getElementById("redraw").onclick = async () => {
+          if(!confirm("对每一页重新生成候选图？")) return;
+          for (const p of pages) { try { await api("/pages/"+p.id+"/images",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"}); } catch(e){} }
+          setMsg("已提交各页重画任务"); poll(id, null);
+        };
+
+        const pagesEl = document.getElementById("pages");
+        for (const p of pages) {
+          const { images } = await api("/pages/" + p.id + "/images");
+          const def = images.find(i=>i.is_default) || images[0];
+          const card = document.createElement("div"); card.className="card page";
+          const thumbs = images.map(i=>`<img src="/assets/${i.image_path}" class="${i.is_default?"default":""}" title="score ${i.combined_score??"-"}" data-iid="${i.id}">`).join("");
+          card.innerHTML = `<img src="${def?("/assets/"+def.image_path):""}" alt="page ${p.page_number}">
+            <div class="muted" style="margin-top:6px">第 ${p.page_number} 页</div>
+            <div style="font-size:13px;margin:4px 0">${esc(p.text_en||"")}</div>
+            <div class="thumbs">${thumbs}</div>
+            <div class="row" style="margin-top:8px">
+              <button class="ghost set">设为默认</button>
+              <button class="ghost rd">重画此页</button>
+            </div>`;
+          pagesEl.appendChild(card);
+          const setBtn = card.querySelector(".set");
+          setBtn.onclick = async () => { const iid = card.querySelector(".thumbs img.default")?.dataset.iid; if(!iid){setMsg("先选一张候选图");return;}
+            try{ await api("/page-images/"+iid,{method:"PATCH"}); setMsg("已设为默认"); detailView(id);}catch(e){setMsg("失败:"+e.message);} };
+          card.querySelector(".rd").onclick = async () => { try{ await api("/pages/"+p.id+"/images",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"}); setMsg("已重画该页"); poll(id,null);}catch(e){setMsg("失败:"+e.message);} };
+          card.querySelectorAll(".thumbs img").forEach(im=>im.onclick=()=>{
+            document.querySelectorAll(".thumbs img.default").forEach(x=>x.classList.remove("default"));
+            im.classList.add("default");
+            card.querySelector("img").src = "/assets/" + im.getAttribute("src").replace("/assets/","");
+          });
+        }
+
+        const ancEl = document.getElementById("anchors");
+        if (!anchors.length) ancEl.innerHTML = `<span class="muted">尚无锚图（生图后生成）</span>`;
+        for (const a of anchors) ancEl.innerHTML += `<div class="anchor"><img src="/assets/${a.sheet_image_path}"><div class="muted" style="font-size:12px">${esc(a.name)}</div></div>`;
+
+        const runsEl = document.getElementById("runs");
+        if (!runs.length) runsEl.textContent = "暂无任务";
+        else runsEl.innerHTML = runs.map(r=>`<div class="card" style="margin-bottom:8px">#${r.id} · ${r.scope} · <b>${r.status}</b>${r.progress?(" · "+esc(r.progress)):""}${r.last_error?(" · 错误: "+esc(r.last_error)):""}</div>`).join("");
+      }
+
+      function poll(id, runId) {
+        if (pollTimer) clearInterval(pollTimer);
+        pollTimer = setInterval(async () => {
+          try {
+            const { runs } = await api("/stories/" + id + "/runs");
+            const active = runs.find(r=>r.status==="queued"||r.status==="running");
+            const el = document.getElementById("runs");
+            if (el) el.innerHTML = runs.map(r=>`<div class="card" style="margin-bottom:8px">#${r.id} · ${r.scope} · <b>${r.status}</b>${r.progress?(" · "+esc(r.progress)):""}${r.last_error?(" · 错误: "+esc(r.last_error)):""}</div>`).join("");
+            if (!active) { clearInterval(pollTimer); pollTimer=null; detailView(id); }
+          } catch(e){}
+        }, 3000);
+      }
+
+      listView();
+    </script>
+  </body>
+</html>
