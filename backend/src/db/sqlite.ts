@@ -40,11 +40,8 @@ class Stmt {
       : typeof p === "object"
       ? p
       : [p];
-    try {
-      this.stmt.bind(toBind);
-    } catch {
-      // 绑定失败（如参数数量不匹配）时退化为忽略
-    }
+    // 绑定失败（参数数量/风格不匹配）必须显式抛出，避免静默写入错值导致数据损坏。
+    this.stmt.bind(toBind);
   }
 
   run(...params: any[]): { lastInsertRowid: number; changes: number } {
@@ -101,11 +98,26 @@ class SqlDb {
   }
 
   transaction<T>(fn: () => T): () => T {
-    // sql.js 无独立事务语义；run() 已逐条落盘。这里返回一个函数，调用时执行并落盘。
+    // 用真实 SQL 事务保证原子性：中途抛错整体回滚，避免「先 DELETE 再 INSERT」类
+    // 操作只执行一半导致数据丢失。事务内的 run() 不再各自落盘，统一在 COMMIT 后落盘一次。
     return () => {
-      const r = fn();
-      persist();
-      return r;
+      this.engine.run("BEGIN");
+      inTransaction = true;
+      try {
+        const r = fn();
+        this.engine.run("COMMIT");
+        inTransaction = false;
+        persist();
+        return r;
+      } catch (e) {
+        try {
+          this.engine.run("ROLLBACK");
+        } catch {
+          /* ignore */
+        }
+        inTransaction = false;
+        throw e;
+      }
     };
   }
 }
@@ -113,6 +125,8 @@ class SqlDb {
 export const db = new SqlDb();
 
 let initialized = false;
+// 事务进行中标志：事务内的 run() 不各自落盘，统一在 COMMIT 后由 transaction() 落盘一次。
+let inTransaction = false;
 
 export async function initDb(): Promise<void> {
   if (initialized) return;
@@ -134,6 +148,7 @@ export async function initDb(): Promise<void> {
 }
 
 export function persist(): void {
+  if (inTransaction) return; // 事务内抑制落盘，交给 transaction() 在 COMMIT 后统一落盘
   if (!db.engine) return;
   fs.writeFileSync(DB_PATH, Buffer.from(db.engine.export()));
 }

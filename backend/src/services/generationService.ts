@@ -363,6 +363,8 @@ interface GenContext {
   frameThreshold: number;
   frameBudget: number;
   globalHint: string;
+  /** 续跑幂等：true 时本 run 已有默认图的页直接跳过（宕机恢复）；一致性修复阶段置 false。 */
+  skipExisting: boolean;
 }
 
 interface FrameLoopResult {
@@ -384,6 +386,24 @@ async function runFrameLoop(
   flipDefault: boolean
 ): Promise<FrameLoopResult> {
   const charIds = getPageCharacterIds(index, pagesText, ctx.extracted);
+
+  // 续跑幂等（设计 §4.3）：本 run 该页已有默认图则直接跳过，不重复生图、不污染候选区。
+  if (ctx.skipExisting) {
+    const existing = db
+      .prepare(
+        `SELECT id, combined_score FROM page_images WHERE generation_run_id = ? AND page_id = ? AND is_default = 1 LIMIT 1`
+      )
+      .get(ctx.runId, page.id) as any;
+    if (existing) {
+      return {
+        bestRowId: existing.id,
+        bestScore: Number(existing.combined_score ?? 0),
+        issues: [],
+        imageUrl: null,
+      };
+    }
+  }
+
   let basePrompt = buildBasePrompt(
     page.image_prompt || "",
     charIds,
@@ -579,6 +599,7 @@ export async function runFullGeneration(runId: number): Promise<void> {
       frameThreshold: run.frame_threshold ?? 0.75,
       frameBudget: run.initial_retry_budget ?? 1,
       globalHint: "",
+      skipExisting: true,
     };
 
     const pagesText: MiniPage[] = pages.map((p) => ({
@@ -605,6 +626,7 @@ export async function runFullGeneration(runId: number): Promise<void> {
     // 序列一致性评分（仅评估已有默认图的页）
     const seqPages = buildSequencePages(pages);
     const seqThreshold = run.sequence_threshold ?? 0.8;
+    ctx.skipExisting = false; // 一致性修复阶段需重新生图，关闭幂等跳过
     if (seqPages.length > 0) {
       let seqResult = await directorCheckSequence(seqPages, style);
       insertSequenceCheck(run.id, story.id, seqResult);
@@ -693,6 +715,7 @@ export async function runSinglePage(runId: number): Promise<void> {
       frameThreshold: run.frame_threshold ?? 0.75,
       frameBudget: run.max_frame_retry ?? 3,
       globalHint: "",
+      skipExisting: false,
     };
 
     const pages = getPagesByStory(story.id);
