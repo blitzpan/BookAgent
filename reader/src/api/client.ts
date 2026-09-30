@@ -2,7 +2,7 @@
 // 后端当前无法运行，支持 VITE_USE_MOCK 走本地示例数据联调。
 
 import { mockStories, mockBook } from "../mock/fixtures";
-import type { ReaderPage, ShelfBook } from "../types";
+import type { ReaderPage, ReaderSegment, ShelfBook } from "../types";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:3000";
 const USE_MOCK = import.meta.env.VITE_USE_MOCK === "true";
@@ -62,8 +62,8 @@ export async function getPublishedStories(): Promise<ShelfBook[]> {
 }
 
 /**
- * 阅读器：合并某书的文本与默认图。
- * 流程：story 详情（文本） -> runs（取最新完成 run） -> run 详情（默认图）。
+ * 阅读器：合并某书的文本与默认图，并挂载「当前选用配音方案」的分段与音频。
+ * 流程：story 详情（文本） -> runs（取最新完成 run） -> run 详情（默认图）-> book-audio（分段音频）。
  */
 export async function getBook(storyId: number): Promise<ReaderPage[]> {
   if (USE_MOCK) return mockBook(storyId);
@@ -91,6 +91,45 @@ export async function getBook(storyId: number): Promise<ReaderPage[]> {
     }
   }
 
+  // 当前选用方案的分段与音频（无选用方案则空）
+  let segmentsByPage = new Map<number, ReaderPage["segments"]>();
+  try {
+    const audio = await fetchJson<{
+      audioSetId: number | null;
+      pages: Array<{
+        pageNumber: number;
+        segments: Array<{
+          seq: number;
+          role: string;
+          speaker: string | null;
+          textZh: string;
+          textEn: string;
+          audioUrls: { zh?: string; en?: string };
+        }>;
+      }>;
+    }>(`/api/stories/${storyId}/book-audio`);
+    for (const p of audio.pages) {
+      segmentsByPage.set(
+        p.pageNumber,
+        p.segments.map((s) => ({
+          seq: s.seq,
+          role: (["narration", "dialogue", "background", "sfx"].includes(s.role)
+            ? s.role
+            : "narration") as ReaderSegment["role"],
+          speaker: s.speaker,
+          textZh: s.textZh,
+          textEn: s.textEn,
+          audioUrls: {
+            zh: s.audioUrls.zh ? assetUrl(s.audioUrls.zh) ?? undefined : undefined,
+            en: s.audioUrls.en ? assetUrl(s.audioUrls.en) ?? undefined : undefined,
+          },
+        }))
+      );
+    }
+  } catch {
+    /* 无配音时忽略 */
+  }
+
   const nums = Array.from(textByPage.keys()).sort((a, b) => a - b);
   return nums.map((n) => {
     const t = textByPage.get(n)!;
@@ -99,6 +138,7 @@ export async function getBook(storyId: number): Promise<ReaderPage[]> {
       textZh: t.text_zh ?? null,
       textEn: t.text_en ?? null,
       imageUrl: assetUrl(imageByPage.get(n)),
+      segments: segmentsByPage.get(n),
     };
   });
 }

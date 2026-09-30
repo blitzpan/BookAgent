@@ -2,8 +2,14 @@ import React from 'react';
 import type { PageDetail } from '../types';
 import { assetUrl } from '../api/client';
 
+interface AudioByPage {
+  zh: string[];
+  en: string[];
+}
+
 interface Props {
   page: PageDetail;
+  audio?: AudioByPage | null;
   onSetDefault: (imageId: number) => void;
   onGenerateNew: (pageId: number) => void;
   busyImageId?: number | null;
@@ -12,6 +18,7 @@ interface Props {
 
 const PageCard: React.FC<Props> = ({
   page,
+  audio,
   onSetDefault,
   onGenerateNew,
   busyImageId,
@@ -19,6 +26,29 @@ const PageCard: React.FC<Props> = ({
 }) => {
   const { page: p, default_image, candidates } = page;
   const defUrl = assetUrl(default_image?.image_path);
+
+  // 顺序播放该语言该页所有分段音频（文本-语音同源，串语言/串页构造上不可能）
+  const playSeq = (urls: string[]) => {
+    if (!urls.length) return;
+    let i = 0;
+    const playNext = () => {
+      if (i >= urls.length) return;
+      const a = new Audio(urls[i]);
+      a.onended = () => {
+        i += 1;
+        playNext();
+      };
+      a.onerror = () => {
+        i += 1;
+        playNext();
+      };
+      a.play().catch(() => {
+        i += 1;
+        playNext();
+      });
+    };
+    playNext();
+  };
 
   return (
     <div className="bg-white dark:bg-gray-800 rounded-xl shadow overflow-hidden flex flex-col">
@@ -71,6 +101,37 @@ const PageCard: React.FC<Props> = ({
                 </button>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* 配音试听：中/EN 两个小徽标，已生成填充、未生成描边 */}
+        {audio && (
+          <div className="flex items-center gap-2 mt-3">
+            <span className="text-xs text-gray-500">配音</span>
+            <button
+              disabled={audio.zh.length === 0}
+              onClick={() => playSeq(audio.zh)}
+              className={`w-9 h-7 rounded-lg text-xs font-medium ${
+                audio.zh.length
+                  ? 'bg-violet-600 text-white hover:bg-violet-700'
+                  : 'border border-dashed border-gray-300 text-gray-400 cursor-not-allowed'
+              }`}
+              title={audio.zh.length ? '试听中文配音' : '该方案此页暂无中文配音'}
+            >
+              中
+            </button>
+            <button
+              disabled={audio.en.length === 0}
+              onClick={() => playSeq(audio.en)}
+              className={`w-9 h-7 rounded-lg text-xs font-medium ${
+                audio.en.length
+                  ? 'bg-violet-600 text-white hover:bg-violet-700'
+                  : 'border border-dashed border-gray-300 text-gray-400 cursor-not-allowed'
+              }`}
+              title={audio.en.length ? '试听英文配音' : '该方案此页暂无英文配音'}
+            >
+              EN
+            </button>
           </div>
         )}
 

@@ -21,6 +21,7 @@ import {
   directorCheckFrame,
   directorCheckSequence,
 } from "./geminiService";
+import { runTtsForStory } from "./ttsService";
 import type {
   DirectorSequenceResult,
 } from "./geminiService";
@@ -107,7 +108,7 @@ export function finishRun(runId: number, status: RunStatus): void {
 
 export function createTask(
   storyId: number,
-  runId: number,
+  runId: number | null,
   pageId: number | null,
   kind: TaskKind,
   params: GenerationConfig
@@ -859,6 +860,47 @@ export async function runSinglePage(taskId: number): Promise<void> {
       r.bestRowId != null ? null : "本页未能生成可用候选图"
     );
   } catch (err: any) {
+    finishTask(taskId, "failed", err?.message ?? String(err));
+  }
+}
+
+/**
+ * TTS 配音任务：由 routes/tts.ts 触发，复用 generation_tasks 调度与进度轮询。
+ * 与生图完全解耦：run_id 仅追踪（可空），执行细节全在 ttsService。
+ */
+export async function runTtsGeneration(taskId: number): Promise<void> {
+  const task = getTask(taskId);
+  if (!task) return;
+  const storyId = task.story_id;
+  let params: { audioSetId?: number; langs?: ("zh" | "en")[]; regenerate?: boolean } = {};
+  try {
+    params = JSON.parse(task.params_json || "{}");
+  } catch {
+    /* ignore */
+  }
+  const audioSetId = Number(params.audioSetId);
+  if (!audioSetId) {
+    finishTask(taskId, "failed", "缺少 audioSetId");
+    return;
+  }
+  setTaskStatus(taskId, "running");
+  try {
+    const { failed } = await runTtsForStory(storyId, audioSetId, {
+      langs: params.langs,
+      regenerate: params.regenerate,
+      onProgress: (done, total, f) => setTaskProgress(taskId, total, done, f),
+    });
+    const status = failed > 0 ? "interrupted" : "completed";
+    db.prepare(`UPDATE audio_sets SET status = ?, updated_at = ? WHERE id = ?`).run(
+      status,
+      now(),
+      audioSetId
+    );
+    finishTask(taskId, "completed", failed > 0 ? `${failed} 段合成失败` : null);
+  } catch (err: any) {
+    db.prepare(
+      `UPDATE audio_sets SET status = 'failed', updated_at = ? WHERE id = ?`
+    ).run(now(), audioSetId);
     finishTask(taskId, "failed", err?.message ?? String(err));
   }
 }

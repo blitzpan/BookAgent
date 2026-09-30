@@ -137,15 +137,34 @@ export async function rewriteStory(storyId: number): Promise<RewriteResult> {
       style
     );
 
-    // 落库：先清旧图（否则旧 page_images 悬挂在已删除的 page 上），再清 pages，最后写新的
+    // 落库：先清旧图/旧页/旧分段（否则旧数据悬挂），再写新的 pages + page_segments
     const tx = db.transaction(() => {
       db.prepare(`DELETE FROM page_images WHERE story_id = ?`).run(storyId);
       db.prepare(`DELETE FROM pages WHERE story_id = ?`).run(storyId);
+      db.prepare(`DELETE FROM page_segments WHERE story_id = ?`).run(storyId);
       for (const p of parsedPages) {
-        db.prepare(
-          `INSERT INTO pages (story_id, page_number, text_en, image_prompt)
-           VALUES (?, ?, ?, ?)`
-        ).run(storyId, p.pageNumber, p.text, p.imagePrompt);
+        const info = db
+          .prepare(
+            `INSERT INTO pages (story_id, page_number, text_en, text_zh, image_prompt)
+             VALUES (?, ?, ?, ?, ?)`
+          )
+          .run(storyId, p.pageNumber, p.text, p.textZh, p.imagePrompt);
+        const pageId = Number(info.lastInsertRowid);
+        const segs = Array.isArray(p.segments) ? p.segments : [];
+        segs.forEach((s, i) => {
+          db.prepare(
+            `INSERT INTO page_segments (page_id, story_id, seq, role, speaker, text_zh, text_en)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`
+          ).run(
+            pageId,
+            storyId,
+            Number(s.seq ?? i + 1),
+            s.role ?? "narration",
+            s.speaker ?? null,
+            s.textZh ?? "",
+            s.textEn ?? ""
+          );
+        });
       }
       db.prepare(
         `UPDATE stories
@@ -243,7 +262,11 @@ export function listStories(status?: string): Array<{
   // 已发布过滤：reader 书架只请求 status='审批通过的作品'，避免草稿外泄。
   // 无参时行为不变（管理壳兼容）。
   const sql = `SELECT s.id, s.user_title, s.status, s.created_at,
-                      (SELECT COUNT(*) FROM pages p WHERE p.story_id = s.id) AS page_count
+                      (SELECT COUNT(*) FROM pages p WHERE p.story_id = s.id) AS page_count,
+                      s.selected_audio_set_id AS selectedAudioSetId,
+                      ((SELECT COUNT(*) FROM audio_sets a WHERE a.story_id = s.id AND a.status='generating') > 0) AS isGenerating,
+                      ((SELECT COUNT(*) FROM audio_sets a WHERE a.story_id = s.id AND a.status='completed') > 0) AS hasAudio,
+                      (SELECT COUNT(*) FROM audio_sets a WHERE a.story_id = s.id) AS audioSetCount
                FROM stories s
                WHERE s.deleted_at IS NULL${status ? " AND s.status = ?" : ""}
                ORDER BY s.updated_at DESC, s.id DESC`;

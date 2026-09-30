@@ -210,12 +210,38 @@ USER STORY:
 
 // ============ 2. Script Writer：按页数 + 风格切成 pages ============
 
+/** 分段（可朗读片段）：同一页内按角色/场景拆分；中英同义，杜绝串语言。 */
+export type SegmentRole = "narration" | "dialogue" | "background" | "sfx";
+
+export interface PageSegment {
+  seq: number;
+  role: SegmentRole;
+  speaker?: string;
+  textZh: string;
+  textEn: string;
+}
+
+/** 分页结果：中英双语文本 + 分段 + 图像提示词。text 为英文规范文本（兼容旧调用方与图像流水线）。 */
+export interface ParsedPage {
+  pageNumber: number;
+  /** 英文规范文本（图像流水线使用，等同 textEn）。 */
+  text: string;
+  /** English narration for this page. */
+  textEn: string;
+  /** 简体中文旁白（faithful、child-friendly 翻译）。 */
+  textZh: string;
+  /** 图像提示词（语言无关，纯视觉描述，建议英文）。 */
+  imagePrompt: string;
+  /** 该页结构化分段（旁白/对话/背景/音效），按出现顺序。 */
+  segments: PageSegment[];
+}
+
 export const parseStoryIntoPages = async (
   story: string,
   imagePath: string | null,
   targetPageCount: number = 6,
   style: string = "whimsical, cute, children's picture-book style"
-): Promise<Omit<StoryPage, "imageUrl">[]> => {
+): Promise<ParsedPage[]> => {
   try {
     const safePageCount = Math.min(Math.max(targetPageCount, 1), 20);
 
@@ -224,8 +250,19 @@ export const parseStoryIntoPages = async (
 Your task is to break down a given story into EXACTLY ${safePageCount} logical pages.
 For each page, you must provide:
 - "pageNumber": starting from 1
-- "text": the text portion for that page
-- "imagePrompt": a detailed, imaginative prompt for an image generator.
+- "text": the ENGLISH narration for that page (used by the image pipeline; same content as "textEn")
+- "textEn": the English narration for that page (exact English version of "text")
+- "textZh": the 简体中文 narration for that page — a faithful, child-friendly translation of the same content
+- "imagePrompt": a detailed, imaginative prompt for an image generator (language-agnostic, describe only visuals; English preferred)
+- "segments": an array of structured text segments for THIS page, split by what should be read aloud separately. Each segment has:
+  - "seq": 1-based order within the page
+  - "role": one of "narration" (storytelling), "dialogue" (a character speaking), "background" (ambient/soundscape description), "sfx" (a sound effect)
+  - "speaker": the character name when role="dialogue", otherwise omit or empty
+  - "textEn": the English text of this segment (should be a substring/equivalent of the page's "textEn")
+  - "textZh": the 简体中文 text of this segment (equivalent to textEn, just Chinese)
+  Combine consecutive narration into one segment; put each spoken line in its own dialogue segment.
+
+IMPORTANT: "text", "textEn", "textZh", and the concatenation of "segments[].textEn/textZh" MUST describe the SAME story beat for the page. Keep them semantically equivalent (just different languages). "text" and "textEn" should be identical English. Segments must cover the whole page text without duplication or omission.
 
 STYLE & CONSISTENCY REQUIREMENTS:
 - Global visual & narrative style: ${style}
@@ -238,9 +275,9 @@ STYLE & CONSISTENCY REQUIREMENTS:
 Return ONLY valid JSON that matches the provided response schema. Do NOT include any extra commentary.`;
 
     const textPrompt = imagePath
-      ? `Analyze the character and style from the provided image. Then, using that as inspiration and following the style "${style}", read the following story and split it into EXACTLY ${safePageCount} pages: "${story}".`
+      ? `Analyze the character and style from the provided image. Then, using that as inspiration and following the style "${style}", read the following story and split it into EXACTLY ${safePageCount} pages, each with bilingual text (text/textEn in English, textZh in 简体中文) and an imagePrompt: "${story}".`
       : `Here is the story. Split it into EXACTLY ${safePageCount} pages.
-For each page, output pageNumber, text, and imagePrompt in the style "${style}". Story:
+For each page, output pageNumber, text (English), textEn (English, same as text), textZh (简体中文), and imagePrompt, in the style "${style}". Story:
 "${story}".`;
 
     const parts: Part[] = [{ text: textPrompt }];
@@ -270,15 +307,64 @@ For each page, output pageNumber, text, and imagePrompt in the style "${style}".
                 text: {
                   type: Type.STRING,
                   description:
-                    "The segment of the story for this specific page.",
+                    "The English narration for this specific page (used by the image pipeline; identical to textEn).",
+                },
+                textEn: {
+                  type: Type.STRING,
+                  description: "The English narration for this page (same as text).",
+                },
+                textZh: {
+                  type: Type.STRING,
+                  description:
+                    "The 简体中文 narration for this page — faithful, child-friendly translation of text/textEn.",
                 },
                 imagePrompt: {
                   type: Type.STRING,
                   description:
                     "A detailed prompt for an image generation AI, in the chosen cartoon style.",
                 },
+                segments: {
+                  type: Type.ARRAY,
+                  description:
+                    "Structured, read-aloud segments of this page in reading order.",
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      seq: {
+                        type: Type.INTEGER,
+                        description: "1-based order within the page.",
+                      },
+                      role: {
+                        type: Type.STRING,
+                        description:
+                          "One of: 'narration' | 'dialogue' | 'background' | 'sfx'.",
+                      },
+                      speaker: {
+                        type: Type.STRING,
+                        description:
+                          "Character name when role='dialogue'; otherwise omit/empty.",
+                      },
+                      textEn: {
+                        type: Type.STRING,
+                        description: "English text of this segment.",
+                      },
+                      textZh: {
+                        type: Type.STRING,
+                        description: "简体中文 text of this segment (equivalent to textEn).",
+                      },
+                    },
+                    required: ["seq", "role", "textZh", "textEn"],
+                  },
+                },
               },
-              required: ["pageNumber", "text", "imagePrompt"],
+              required: [
+                "pageNumber",
+                "text",
+                "textEn",
+                "textZh",
+                "imagePrompt",
+                "segments",
+              ],
             },
           },
         },
@@ -291,7 +377,28 @@ For each page, output pageNumber, text, and imagePrompt in the style "${style}".
       throw new Error("Invalid response format from story parsing API.");
     }
 
-    return jsonResponse.pages as Omit<StoryPage, "imageUrl">[];
+    return (jsonResponse.pages as any[]).map((p, pageIdx) => {
+      const segmentsRaw = Array.isArray(p.segments) ? p.segments : [];
+      const segments: PageSegment[] = segmentsRaw.map(
+        (s: any, i: number): PageSegment => ({
+          seq: Number(s.seq ?? i + 1),
+          role: (["narration", "dialogue", "background", "sfx"].includes(s.role)
+            ? s.role
+            : "narration") as SegmentRole,
+          speaker: s.speaker ? String(s.speaker) : undefined,
+          textZh: String(s.textZh ?? ""),
+          textEn: String(s.textEn ?? ""),
+        })
+      );
+      return {
+        pageNumber: Number(p.pageNumber ?? pageIdx + 1),
+        text: String(p.text ?? p.textEn ?? ""),
+        textEn: String(p.textEn ?? p.text ?? ""),
+        textZh: String(p.textZh ?? ""),
+        imagePrompt: String(p.imagePrompt ?? ""),
+        segments,
+      } satisfies ParsedPage;
+    });
   } catch (error) {
     console.error("Error parsing story:", error);
     throw new Error(

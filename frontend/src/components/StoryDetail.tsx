@@ -1,14 +1,16 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { api } from '../api/client';
+import { api, assetUrl } from '../api/client';
 import type {
   Story,
   Page,
   GenerationRun,
   GenerationTask,
   RunDetail,
+  AudioSet,
 } from '../types';
 import { storyStatusColor, runStatusColor } from '../status';
 import StoryConfigPanel from './StoryConfigPanel';
+import { AudioPlanModal } from './AudioPlanModal';
 import { DEFAULT_GENERATION_CONFIG } from '../constants';
 import PageCard from './PageCard';
 import AnchorGallery from './AnchorGallery';
@@ -21,8 +23,26 @@ interface Props {
 
 const ACTIVE = new Set(['queued', 'running']);
 
+const AUDIO_SET_BADGE: Record<string, { label: string; cls: string }> = {
+  pending: { label: '待生成', cls: 'bg-gray-100 text-gray-600' },
+  generating: { label: '配音中', cls: 'bg-violet-100 text-violet-700' },
+  completed: { label: '已配音', cls: 'bg-emerald-100 text-emerald-700' },
+  interrupted: { label: '中断', cls: 'bg-amber-100 text-amber-700' },
+  failed: { label: '失败', cls: 'bg-red-100 text-red-700' },
+};
+
+function AudioSetBadge({ status }: { status: string }) {
+  const b = AUDIO_SET_BADGE[status] ?? AUDIO_SET_BADGE.pending;
+  return <span className={`text-xs px-2 py-0.5 rounded-full ${b.cls}`}>{b.label}</span>;
+}
+
 const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged }) => {
-  const [detail, setDetail] = useState<{ story: Story; pages: Page[] } | null>(null);
+  const [detail, setDetail] = useState<{
+    story: Story;
+    pages: Page[];
+    audioSets: AudioSet[];
+    selectedAudioSetId: number | null;
+  } | null>(null);
   const [runs, setRuns] = useState<GenerationRun[]>([]);
   const [runDetail, setRunDetail] = useState<RunDetail | null>(null);
   const [activeRunId, setActiveRunId] = useState<number | null>(null);
@@ -35,6 +55,19 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged }) => {
   const [textTab, setTextTab] = useState<'original' | 'refined'>('original');
   const [busyImageId, setBusyImageId] = useState<number | null>(null);
   const [busyPageId, setBusyPageId] = useState<number | null>(null);
+  // ===== 配音（TTS）状态：独立任务，与生图互不干扰 =====
+  const [audioSets, setAudioSets] = useState<AudioSet[]>(detail?.audioSets ?? []);
+  const [selectedAudioSetId, setSelectedAudioSetId] = useState<number | null>(
+    detail?.selectedAudioSetId ?? null
+  );
+  const [ttsTask, setTtsTask] = useState<GenerationTask | null>(null);
+  const [ttsMessage, setTtsMessage] = useState<string | null>(null);
+  const [ttsError, setTtsError] = useState<string | null>(null);
+  const [busyTts, setBusyTts] = useState(false);
+  // 试听弹窗：当前正在试听的配音方案
+  const [listen, setListen] = useState<{ id: number; name: string } | null>(null);
+  // 当前选用方案的逐页音频（用于 PageCard 徽标试听）：pageNumber -> {zh[], en[]}
+  const [audioByPage, setAudioByPage] = useState<Record<number, { zh: string[]; en: string[] }>>({});
 
   const loadDetail = useCallback(async () => {
     const d = await api.getStory(storyId);
@@ -54,15 +87,26 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged }) => {
     setRunDetail(rd);
   }, []);
 
+  const loadAudio = useCallback(async () => {
+    try {
+      const r = await api.listAudioSets(storyId);
+      setAudioSets(r.audioSets);
+      const sel = r.audioSets.find((a) => a.is_selected)?.id ?? null;
+      setSelectedAudioSetId(sel);
+    } catch (e: any) {
+      setTtsError(e?.message ?? String(e));
+    }
+  }, [storyId]);
+
   const refresh = useCallback(async () => {
     setError(null);
     try {
-      await Promise.all([loadDetail(), loadRuns()]);
+      await Promise.all([loadDetail(), loadRuns(), loadAudio()]);
       if (activeRunId != null) await loadRunDetail(activeRunId);
     } catch (e: any) {
       setError(e?.message ?? String(e));
     }
-  }, [loadDetail, loadRuns, loadRunDetail, activeRunId]);
+  }, [loadDetail, loadRuns, loadRunDetail, loadAudio, activeRunId]);
 
   useEffect(() => {
     refresh();
@@ -114,6 +158,117 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged }) => {
       setBusy(false);
     }
   };
+
+  // 当前选用方案变化 → 拉取逐页音频 URL（用于 PageCard 试听徽标）
+  useEffect(() => {
+    if (!selectedAudioSetId) {
+      setAudioByPage({});
+      return;
+    }
+    let cancelled = false;
+    api
+      .getBookAudio(storyId, selectedAudioSetId)
+      .then((data) => {
+        if (cancelled) return;
+        const m: Record<number, { zh: string[]; en: string[] }> = {};
+        for (const p of data.pages) {
+          const zh: string[] = [];
+          const en: string[] = [];
+          for (const seg of p.segments) {
+            if (seg.audioUrls.zh) zh.push(assetUrl(seg.audioUrls.zh)!);
+            if (seg.audioUrls.en) en.push(assetUrl(seg.audioUrls.en)!);
+          }
+          m[p.pageNumber] = { zh, en };
+        }
+        setAudioByPage(m);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [storyId, selectedAudioSetId]);
+
+  // 配音中：选用方案处于 generating，或本组件正在轮询的 tts 任务进行中
+  const isGeneratingTts =
+    audioSets.some((a) => a.status === 'generating') ||
+    (!!ttsTask && ['queued', 'running'].includes(ttsTask.status));
+
+  const startTts = async (forceNew: boolean) => {
+    setBusyTts(true);
+    setTtsError(null);
+    setTtsMessage(null);
+    try {
+      const { taskId, audioSetId } = await api.generateTts(storyId, { forceNew });
+      const { task } = await api.getTask(taskId);
+      setTtsTask(task);
+      setTtsMessage(`已创建配音任务 #${taskId}（方案 #${audioSetId}），后台合成中…`);
+      await loadAudio();
+      onChanged();
+    } catch (e: any) {
+      setTtsError(e?.message ?? String(e));
+    } finally {
+      setBusyTts(false);
+    }
+  };
+
+  const handleSelectSet = async (setId: number) => {
+    try {
+      await api.selectAudioSet(setId);
+      setSelectedAudioSetId(setId);
+      await loadAudio();
+    } catch (e: any) {
+      setTtsError(e?.message ?? String(e));
+    }
+  };
+
+  const handleResumeSet = async (setId: number) => {
+    setBusyTts(true);
+    setTtsError(null);
+    try {
+      const { taskId } = await api.resumeAudioSet(setId);
+      const { task } = await api.getTask(taskId);
+      setTtsTask(task);
+      setTtsMessage(`已继续生成配音任务 #${taskId}（方案 #${setId}）…`);
+      await loadAudio();
+    } catch (e: any) {
+      setTtsError(e?.message ?? String(e));
+    } finally {
+      setBusyTts(false);
+    }
+  };
+
+  const handleDeleteSet = async (setId: number) => {
+    if (!confirm('确认删除该配音方案？（其音频文件不会自动删除）')) return;
+    try {
+      await api.deleteAudioSet(setId);
+      await loadAudio();
+    } catch (e: any) {
+      setTtsError(e?.message ?? String(e));
+    }
+  };
+
+  // 轮询配音任务进度（独立 timer，与生图互不干扰）
+  useEffect(() => {
+    if (!ttsTask || !['queued', 'running'].includes(ttsTask.status)) return;
+    const timer = setInterval(async () => {
+      try {
+        const { task } = await api.getTask(ttsTask.id);
+        setTtsTask(task);
+        if (!['queued', 'running'].includes(task.status)) {
+          const pr = task.progress ? JSON.parse(task.progress) : null;
+          setTtsMessage(
+            `配音完成：成功 ${pr?.done ?? '?'} / 失败 ${pr?.failed ?? 0}`
+          );
+          await loadAudio();
+          await loadDetail();
+          onChanged();
+        }
+      } catch {
+        /* 忽略单次轮询失败 */
+      }
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [ttsTask, loadAudio, loadDetail, onChanged]);
 
   // 轮询当前整书任务进度（仅在 queued/running 时）
   useEffect(() => {
@@ -277,6 +432,15 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged }) => {
         >
           刷新
         </button>
+        {/* 配音（TTS）：独立按钮，violet 区别于生图 indigo */}
+        <button
+          disabled={busyTts || isGeneratingTts}
+          onClick={() => startTts(true)}
+          title="始终新建一组配音方案（用于多组对比试听）"
+          className="px-4 py-2 rounded-lg bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-200 hover:bg-violet-200 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          ＋ 新建配音
+        </button>
         <button
           disabled={isGenerating}
           onClick={handleDelete}
@@ -295,6 +459,111 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged }) => {
         <div className="p-3 rounded-lg border-l-4 border-red-400 bg-red-50 dark:bg-red-900/30 text-sm text-red-700 dark:text-red-300 whitespace-pre-line">
           {error}
         </div>
+      )}
+
+      {/* ===== 配音（TTS）独立区块：进度/方案管理，与生图互不干扰 ===== */}
+      <section className="rounded-2xl border border-violet-200 dark:border-violet-800 bg-violet-50/60 dark:bg-violet-950/30 p-5 space-y-4">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <h3 className="text-lg font-bold text-violet-800 dark:text-violet-200">配音方案</h3>
+          <span className="text-sm text-gray-500">
+            方案数 {audioSets.length}
+            {selectedAudioSetId != null && ` · 当前选用 #${selectedAudioSetId}`}
+            {isGeneratingTts && ' · 配音中…'}
+          </span>
+        </div>
+
+        {ttsMessage && (
+          <div className="text-sm p-2 rounded-lg border-l-4 border-violet-400 bg-violet-100/60 dark:bg-violet-900/30 whitespace-pre-line">
+            {ttsMessage}
+          </div>
+        )}
+        {ttsError && (
+          <div className="text-sm p-2 rounded-lg border-l-4 border-red-400 bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300">
+            {ttsError}
+          </div>
+        )}
+
+        {ttsTask && ['queued', 'running'].includes(ttsTask.status) && (
+          <div className="text-sm text-gray-600 dark:text-gray-300">
+            配音任务 #{ttsTask.id} 进行中
+            {(() => {
+              const p = ttsTask.progress ? JSON.parse(ttsTask.progress) : null;
+              return p ? ` · 进度 ${p.done}/${p.total}${p.failed ? ` · 失败 ${p.failed}` : ''}` : '';
+            })()}
+          </div>
+        )}
+        {ttsTask?.status === 'failed' && (
+          <div className="text-sm text-red-500">配音任务 #{ttsTask.id} 失败：{ttsTask.last_error ?? '未知原因'}</div>
+        )}
+
+        {audioSets.length === 0 ? (
+          <p className="text-sm text-gray-500">尚无配音方案，点击「新建配音」开始（可多次生成不同音色组对比，逐组试听后选用）。</p>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {audioSets.map((s) => {
+              const sel = s.id === selectedAudioSetId;
+              return (
+                <div
+                  key={s.id}
+                  className={`rounded-xl border p-3 ${
+                    sel
+                      ? 'border-violet-500 bg-violet-100/70 dark:bg-violet-900/50'
+                      : 'border-gray-200 dark:border-gray-700'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold">#{s.id} {s.name}</span>
+                    <AudioSetBadge status={s.status} />
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1">
+                    进度 {s.done}/{s.total}
+                    {sel && ' · 当前选用'}
+                  </div>
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    <button
+                      disabled={sel}
+                      onClick={() => handleSelectSet(s.id)}
+                      className="text-xs px-3 py-1.5 rounded-lg bg-emerald-600 text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {sel ? '已选用' : '设为选用'}
+                    </button>
+                    <button
+                      onClick={() => setListen({ id: s.id, name: `#${s.id} ${s.name}` })}
+                      className="text-xs px-3 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700"
+                    >
+                      试听
+                    </button>
+                    {(s.status === 'interrupted' || s.status === 'failed') && (
+                      <button
+                        disabled={busyTts || isGeneratingTts}
+                        onClick={() => handleResumeSet(s.id)}
+                        className="text-xs px-3 py-1.5 rounded-lg bg-amber-600 text-white disabled:opacity-50"
+                      >
+                        继续生成
+                      </button>
+                    )}
+                    <button
+                      disabled={sel}
+                      onClick={() => handleDeleteSet(s.id)}
+                      className="text-xs px-3 py-1.5 rounded-lg bg-red-500 text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      删除
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {listen && (
+        <AudioPlanModal
+          storyId={storyId}
+          setId={listen.id}
+          name={listen.name}
+          onClose={() => setListen(null)}
+        />
       )}
 
       <section>
@@ -466,6 +735,7 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged }) => {
               <PageCard
                 key={pd.page.id}
                 page={pd}
+                audio={audioByPage[pd.page.page_number] ?? null}
                 onSetDefault={handleSetDefault}
                 onGenerateNew={handleGenerateNew}
                 busyImageId={busyImageId}

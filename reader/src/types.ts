@@ -13,6 +13,17 @@ export interface Hotspot {
   payload: string;
 }
 
+/** 单页分段（双语、按场景区分角色/音色） */
+export interface ReaderSegment {
+  seq: number;
+  role: "narration" | "dialogue" | "background" | "sfx";
+  speaker: string | null;
+  textZh: string;
+  textEn: string;
+  /** 各语言音频 URL（已拼 API_BASE）；无则 undefined */
+  audioUrls: { zh?: string; en?: string };
+}
+
 /** 单页阅读数据 */
 export interface ReaderPage {
   pageNumber: number;
@@ -21,6 +32,7 @@ export interface ReaderPage {
   imageUrl: string | null; // 来自 default_image.image_path 拼 API_BASE；无图则 null
   audioUrl?: string; // 预留：每页音频（后端未来入库）
   hotspots?: Hotspot[]; // 预留：热区（后端未来入库）
+  segments?: ReaderSegment[]; // 分段配音（按 seq 排列；无则按整页文本）
 }
 
 /** 书架卡片 */

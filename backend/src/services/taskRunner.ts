@@ -5,6 +5,7 @@ import {
   getTask,
   runFullGeneration,
   runSinglePage,
+  runTtsGeneration,
   recoverTasks,
   finishTask,
 } from "./generationService";
@@ -18,7 +19,8 @@ export async function runTask(taskId: number): Promise<void> {
   if (task.status === "completed" || task.status === "failed") return;
   running.add(taskId);
   try {
-    if (task.kind === "single_page") await runSinglePage(taskId);
+    if (task.kind === "tts") await runTtsGeneration(taskId);
+    else if (task.kind === "single_page") await runSinglePage(taskId);
     else await runFullGeneration(taskId);
   } catch (err: any) {
     // generationService 内部已自行落任务/故事状态；此处仅作最终兜底

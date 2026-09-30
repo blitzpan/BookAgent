@@ -14,6 +14,15 @@ interface Props {
 
 const DEFAULT_STYLE = "whimsical, cute, soft-color children's picture-book style";
 
+function audioState(s: StorySummary): { label: string; cls: string } {
+  if (s.isGenerating) return { label: '配音中…', cls: 'bg-violet-100 text-violet-700' };
+  if (s.hasAudio)
+    return { label: `已配音 · ${s.audioSetCount}组`, cls: 'bg-emerald-100 text-emerald-700' };
+  return s.audioSetCount > 0
+    ? { label: '中断', cls: 'bg-amber-100 text-amber-700' }
+    : { label: '未配音', cls: 'bg-gray-100 text-gray-500' };
+}
+
 function readAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const r = new FileReader();
@@ -172,6 +181,7 @@ const StoryList: React.FC<Props> = ({ stories, loading, onRefresh, onView, onCha
                     <th className="px-4 py-3">标题</th>
                     <th className="px-4 py-3 w-40">状态</th>
                     <th className="px-4 py-3 w-20">页数</th>
+                    <th className="px-4 py-3 w-32">配音</th>
                     <th className="px-4 py-3 w-32">创建时间</th>
                     <th className="px-4 py-3 w-40 text-right">操作</th>
                   </tr>
@@ -191,6 +201,13 @@ const StoryList: React.FC<Props> = ({ stories, loading, onRefresh, onView, onCha
                         </span>
                       </td>
                       <td className="px-4 py-3">{s.page_count}</td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={`text-xs px-2 py-1 rounded-full ${audioState(s).cls}`}
+                        >
+                          {audioState(s).label}
+                        </span>
+                      </td>
                       <td className="px-4 py-3 text-gray-500">
                         {s.created_at ? s.created_at.slice(0, 10) : '-'}
                       </td>

@@ -425,11 +425,23 @@ function buildPagesValue(ctx: RequestCtx) {
   const story = extractStory(ctx);
   const style = extractStyle(ctx);
   const chunks = chunkIntoPages(story, n);
-  return chunks.map((text, i) => ({
-    pageNumber: i + 1,
-    text,
-    imagePrompt: buildImagePrompt(text, style, i + 1),
-  }));
+  return chunks.map((text, i) => {
+    const sentences = splitSentences(text).filter((s) => s.trim());
+    const segments = sentences.map((s, si) => ({
+      seq: si + 1,
+      role: "narration",
+      textZh: s.trim(),
+      textEn: s.trim(),
+    }));
+    return {
+      pageNumber: i + 1,
+      text,
+      textEn: text,
+      textZh: text,
+      imagePrompt: buildImagePrompt(text, style, i + 1),
+      segments,
+    };
+  });
 }
 
 function buildRefineValue(ctx: RequestCtx) {

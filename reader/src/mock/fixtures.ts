@@ -36,5 +36,15 @@ export function mockBook(storyId: number): ReaderPage[] {
     textZh: ZH[i % ZH.length],
     textEn: EN[i % EN.length],
     imageUrl: `https://picsum.photos/seed/${base}${i + 1}/900/1200`,
+    segments: [
+      {
+        seq: 1,
+        role: "narration",
+        speaker: null,
+        textZh: ZH[i % ZH.length],
+        textEn: EN[i % EN.length],
+        audioUrls: {},
+      },
+    ],
   }));
 }

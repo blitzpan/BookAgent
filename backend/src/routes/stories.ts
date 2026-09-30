@@ -10,6 +10,7 @@ import {
 import { STORY_STATUS } from "../constants/status";
 import { mergeGenerationConfig } from "../constants/generationConfig";
 import { hasActiveTaskForStory } from "../services/generationService";
+import { listAudioSets, getSelectedAudioSetId } from "../services/ttsService";
 
 export function registerStoryRoutes(app: FastifyInstance): void {
   // 建故事
@@ -68,6 +69,8 @@ export function registerStoryRoutes(app: FastifyInstance): void {
         generation_config: mergeGenerationConfig(detail.story.generation_config),
       },
       pages: detail.pages,
+      audioSets: listAudioSets(id),
+      selectedAudioSetId: getSelectedAudioSetId(id),
     };
   });
 

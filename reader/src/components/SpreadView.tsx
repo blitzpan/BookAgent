@@ -6,22 +6,23 @@ interface Props {
   right: ReaderPage | null;
   lang: LangMode;
   fontSize: number;
+  onEnded?: () => void;
 }
 
 /** 双页跨页：左右两页并排 */
-export default function SpreadView({ left, right, lang, fontSize }: Props) {
+export default function SpreadView({ left, right, lang, fontSize, onEnded }: Props) {
   return (
     <div className="spread">
       <div className="spread-half">
         {left ? (
-          <PageView page={left} lang={lang} fontSize={fontSize} />
+          <PageView page={left} lang={lang} fontSize={fontSize} onEnded={onEnded} />
         ) : (
           <div className="page-image-empty">—</div>
         )}
       </div>
       <div className="spread-half">
         {right ? (
-          <PageView page={right} lang={lang} fontSize={fontSize} />
+          <PageView page={right} lang={lang} fontSize={fontSize} onEnded={onEnded} />
         ) : (
           <div className="page-image-empty">—</div>
         )}

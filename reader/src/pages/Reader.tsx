@@ -66,7 +66,7 @@ export default function Reader() {
         {error && <div className="state state-error">{error}</div>}
         {pages && pages.length === 0 && <div className="state">本书暂无页面</div>}
         {pages && pages.length > 0 && effectiveMode === "single" && (
-          <PageView page={pages[view]} lang={lang} fontSize={fontSize} />
+          <PageView page={pages[view]} lang={lang} fontSize={fontSize} onEnded={goNext} />
         )}
         {pages && pages.length > 0 && effectiveMode === "spread" && (
           <SpreadView
@@ -74,6 +74,7 @@ export default function Reader() {
             right={pages[view * 2 + 1] ?? null}
             lang={lang}
             fontSize={fontSize}
+            onEnded={goNext}
           />
         )}
       </div>

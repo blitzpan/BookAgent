@@ -204,13 +204,23 @@ body {
   font-size: 16px;
 }
 
+/* 玻璃拟态音频控制条（播放/暂停/进度/自动翻页） */
+.audio-control.glass {
+  background: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-top: 1px solid rgba(255, 255, 255, 0.18);
+}
+
 .page-caption {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 0;
+  bottom: 64px;
   padding: 28px 18px 18px;
   background: linear-gradient(to top, rgba(0, 0, 0, 0.85), rgba(0, 0, 0, 0));
+  max-height: 45%;
+  overflow-y: auto;
 }
 
 .caption-line {

@@ -17,6 +17,37 @@ export interface StorySummary {
   status: string;
   page_count: number;
   created_at: string | null;
+  // 配音三态聚合：isGenerating → 配音中；hasAudio → 已配音；否则未配音
+  isGenerating: boolean;
+  hasAudio: boolean;
+  audioSetCount: number;
+  selectedAudioSetId: number | null;
+}
+
+export type AudioSetStatus = 'pending' | 'generating' | 'completed' | 'interrupted' | 'failed';
+export type Lang = 'zh' | 'en';
+
+export interface AudioSetConfig {
+  voices?: Partial<Record<string, Partial<Record<Lang, string>>>>;
+  langs?: Lang[];
+}
+
+export interface AudioSet {
+  id: number;
+  name: string;
+  status: AudioSetStatus;
+  is_selected: number;
+  config_json: string | null;
+  created_at: string | null;
+  // 进度：预期音频数 / 已生成数（来自 page_audio）
+  total: number;
+  done: number;
+}
+
+/** /api/stories/:id 详情的配音相关兜底字段。 */
+export interface StoryAudioState {
+  audioSets: AudioSet[];
+  selectedAudioSetId: number | null;
 }
 
 export interface Story {
@@ -34,6 +65,7 @@ export interface Story {
   inspiration_image_path: string | null;
   generation_config: GenerationConfig | null;
   current_run_id: number | null;
+  selected_audio_set_id: number | null;
   created_at: string | null;
   updated_at: string | null;
   deleted_at: string | null;
@@ -45,7 +77,7 @@ export interface GenerationTask {
   story_id: number;
   run_id: number | null;
   page_id: number | null;
-  kind: 'full' | 'single_page';
+  kind: 'full' | 'single_page' | 'tts';
   status: 'queued' | 'running' | 'completed' | 'failed';
   progress: string | null;
   last_error: string | null;

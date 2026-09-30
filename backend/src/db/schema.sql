@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS stories (
   inspiration_image_path TEXT,                    -- 灵感图(磁盘相对路径),仅影响分页
   generation_config   TEXT,                       -- JSON 生图参数(见 constants/generationConfig.ts)
   current_run_id      INTEGER,                    -- 当前生效的整书 run(版本指针)
+  selected_audio_set_id INTEGER,                   -- 当前选用的配音方案(audio_sets.id)，开发阶段新增
   created_at          TEXT,
   updated_at          TEXT,
   deleted_at          TEXT
@@ -125,6 +126,53 @@ CREATE TABLE IF NOT EXISTS sequence_checks (
   FOREIGN KEY (story_id) REFERENCES stories(id),
   FOREIGN KEY (generation_run_id) REFERENCES generation_runs(id)
 );
+
+-- 开发阶段直接重建：旧版 page_audio（无 audio_set_id）先丢弃再建新表。
+DROP TABLE IF EXISTS page_audio;
+
+-- 页面内结构化文本行：支持角色/场景区分（旁白/对话/背景/音效）
+CREATE TABLE IF NOT EXISTS page_segments (
+  id        INTEGER PRIMARY KEY,
+  page_id   INTEGER NOT NULL,
+  story_id  INTEGER NOT NULL,
+  seq       INTEGER NOT NULL,
+  role      TEXT NOT NULL DEFAULT 'narration', -- 'narration'|'dialogue'|'background'|'sfx'
+  speaker   TEXT,                              -- 对话角色名（role=dialogue）
+  text_zh   TEXT NOT NULL,
+  text_en   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_seg_page ON page_segments(page_id, seq);
+
+-- 配音方案（语音组）：一个故事可有多组，不同人物/音色；后台试听后选一组作为正式版
+CREATE TABLE IF NOT EXISTS audio_sets (
+  id          INTEGER PRIMARY KEY,
+  story_id    INTEGER NOT NULL,
+  name        TEXT NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'pending', -- pending|generating|completed|interrupted|failed
+  config_json TEXT,                            -- JSON: 各 role/lang 的 voice 配置
+  is_selected INTEGER DEFAULT 0,               -- 每 story 仅一个为 1
+  created_at  TEXT,
+  updated_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_audio_sets_story ON audio_sets(story_id, status);
+
+-- 配音：每「方案 × 分段 × 语言 × 场景」一条，由已落库文本生成并回写绑定
+CREATE TABLE IF NOT EXISTS page_audio (
+  id          INTEGER PRIMARY KEY,
+  audio_set_id INTEGER NOT NULL,
+  page_id     INTEGER NOT NULL,
+  story_id    INTEGER NOT NULL,
+  segment_id  INTEGER,                         -- NULL=整页合并音频；否则对应 page_segments.id
+  lang        TEXT NOT NULL,                   -- 'zh' | 'en'
+  scene       TEXT NOT NULL DEFAULT 'narration',
+  audio_path  TEXT NOT NULL,
+  voice       TEXT,
+  provider    TEXT,
+  duration_ms INTEGER,
+  created_at  TEXT,
+  UNIQUE(audio_set_id, page_id, segment_id, lang, scene)
+);
+CREATE INDEX IF NOT EXISTS idx_audio_page ON page_audio(audio_set_id, page_id, lang);
 
 CREATE INDEX IF NOT EXISTS idx_characters_story ON characters(story_id, generation_run_id);
 CREATE INDEX IF NOT EXISTS idx_pages_story ON pages(story_id);

@@ -17,6 +17,7 @@ export interface Story {
   inspiration_image_path: string | null;
   generation_config: string | null; // JSON 生图参数
   current_run_id: number | null; // 当前生效版本
+  selected_audio_set_id: number | null; // 当前选用配音方案
   created_at: string | null;
   updated_at: string | null;
   deleted_at: string | null;
@@ -42,10 +43,34 @@ export interface Page {
   lock_text: string | null;
 }
 
+/** 页面内一段可朗读文本（旁白/对话/背景/音效）。 */
+export type SegmentRole = "narration" | "dialogue" | "background" | "sfx";
+export interface PageSegment {
+  id: number;
+  page_id: number;
+  story_id: number;
+  seq: number;
+  role: SegmentRole;
+  speaker: string | null;
+  text_zh: string;
+  text_en: string;
+}
+
+/** 配音方案（语音组）：一个故事可有多组，后台试听后选定一组作为正式版。 */
+export interface AudioSet {
+  id: number;
+  story_id: number;
+  name: string;
+  status: "pending" | "generating" | "completed" | "interrupted" | "failed";
+  config_json: string | null; // JSON: 各 role/lang 的 voice 配置
+  is_selected: number; // 0/1
+  created_at: string | null;
+}
+
 /** run 只描述「版本产出状态」；执行中的 queued/running 属于 task。 */
 export type RunStatus = "running" | "completed" | "partial_failed" | "failed";
 
-export type TaskKind = "full" | "single_page";
+export type TaskKind = "full" | "single_page" | "tts";
 export type TaskStatus = "queued" | "running" | "completed" | "failed";
 
 export interface GenerationRun {

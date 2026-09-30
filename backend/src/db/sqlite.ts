@@ -17,8 +17,9 @@ const SQLJS_DIST = path.join(BACKEND_DIR, "node_modules/sql.js/dist");
 
 export const DATA_DIR =
   process.env.BOOKAGENT_DATA_DIR || path.join(BACKEND_DIR, "data");
-export const ASSETS_DIR = path.join(DATA_DIR, "assets");
-export const DB_PATH = path.join(DATA_DIR, "bookagent.db");
+export const ASSETS_DIR = process.env.BOOKAGENT_ASSETS_DIR || path.join(DATA_DIR, "assets");
+// 允许通过环境变量覆盖 DB 路径（冒烟测试用独立临时库；开发阶段直接重建）。
+export const DB_PATH = process.env.DB_PATH || path.join(DATA_DIR, "bookagent.db");
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(ASSETS_DIR)) fs.mkdirSync(ASSETS_DIR, { recursive: true });
@@ -143,6 +144,29 @@ export async function initDb(): Promise<void> {
   // 建表（SQL 与 database设计.md 一致；去掉 WAL pragma，sql.js 不支持）
   const schema = fs.readFileSync(path.join(BACKEND_DIR, "src/db/schema.sql"), "utf-8");
   db.exec(schema);
+
+  // 开发阶段向前兼容：旧库可能缺 selected_audio_set_id 列，补上即可（新库已含该列，忽略重复报错）。
+  try {
+    db.exec(`ALTER TABLE stories ADD COLUMN selected_audio_set_id INTEGER`);
+  } catch {
+    /* 列已存在或无需添加，忽略 */
+  }
+  // 同上：旧库 audio_sets 可能缺 updated_at 列（本期新增）。
+  try {
+    db.exec(`ALTER TABLE audio_sets ADD COLUMN updated_at TEXT`);
+  } catch {
+    /* 列已存在或无需添加，忽略 */
+  }
+
+  // 宕机恢复：上次进程退出时仍在 generating 的配音方案，标记为 interrupted（可被「继续生成」复用）。
+  try {
+    db.exec(
+      `UPDATE audio_sets SET status='interrupted' WHERE status='generating'`
+    );
+  } catch {
+    /* audio_sets 尚未建好，忽略 */
+  }
+
   persist();
   initialized = true;
 }

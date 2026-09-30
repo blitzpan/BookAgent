@@ -1,12 +1,15 @@
 import type {
   StorySummary,
   Story,
+  StoryAudioState,
   Page,
   GenerationRun,
   GenerationTask,
   GenerationConfig,
   RunDetail,
   GenerateConfig,
+  AudioSet,
+  Lang,
 } from '../types';
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -47,7 +50,7 @@ export const api = {
     inspiration_image?: string;
   }) => request<{ id: number }>('POST', '/api/stories', input),
   getStory: (id: number) =>
-    request<{ story: Story; pages: Page[] }>('GET', `/api/stories/${id}`),
+    request<{ story: Story; pages: Page[] } & StoryAudioState>('GET', `/api/stories/${id}`),
   updateStory: (
     id: number,
     body: {
@@ -85,4 +88,40 @@ export const api = {
     request<{ ok: true; status: string }>('POST', `/api/stories/${id}/publish`),
   deleteStory: (id: number) =>
     request<{ ok: true }>('DELETE', `/api/stories/${id}`),
+  // ===== 配音（TTS）：独立接口，与生图完全解耦 =====
+  generateTts: (
+    storyId: number,
+    opts?: { name?: string; langs?: Lang[]; regenerate?: boolean; forceNew?: boolean }
+  ) =>
+    request<{ taskId: number; audioSetId: number }>(
+      'POST',
+      `/api/stories/${storyId}/tts`,
+      opts ?? {}
+    ),
+  listAudioSets: (storyId: number) =>
+    request<{ audioSets: AudioSet[] }>('GET', `/api/stories/${storyId}/audio-sets`),
+  selectAudioSet: (setId: number) =>
+    request<{ ok: true }>('POST', `/api/audio-sets/${setId}/select`),
+  resumeAudioSet: (setId: number) =>
+    request<{ taskId: number; audioSetId: number }>(
+      'POST',
+      `/api/audio-sets/${setId}/resume`
+    ),
+  deleteAudioSet: (setId: number) =>
+    request<{ ok: true }>('DELETE', `/api/audio-sets/${setId}`),
+  getBookAudio: (storyId: number, setId?: number) =>
+    request<{
+      audioSetId: number | null;
+      pages: Array<{
+        pageNumber: number;
+        segments: Array<{
+          seq: number;
+          role: string;
+          speaker: string | null;
+          textZh: string;
+          textEn: string;
+          audioUrls: { zh?: string; en?: string };
+        }>;
+      }>;
+    }>('GET', `/api/stories/${storyId}/book-audio${setId ? `?setId=${setId}` : ''}`),
 };

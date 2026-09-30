@@ -51,6 +51,10 @@ export async function buildApp() {
         ? "image/jpeg"
         : ext === "webp"
         ? "image/webp"
+        : ext === "mp3"
+        ? "audio/mpeg"
+        : ext === "json"
+        ? "application/json"
         : "image/png";
     reply.header("Content-Type", mime);
     return reply.send(fs.readFileSync(abs));
