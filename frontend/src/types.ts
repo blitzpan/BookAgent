@@ -160,3 +160,34 @@ export interface RunDetail {
 
 /** 生图时的可选一次性覆盖（一般不传，用故事配置）。 */
 export type GenerateConfig = Partial<GenerationConfig>;
+
+// ===================== 图片热区 =====================
+export type HotspotKind = 'audio' | 'text' | 'link';
+export type HotspotSource = 'ai' | 'manual';
+
+/** 热区（snake_case，对齐后端 page_hotspots 行）。只存中心点 (x,y) 归一化 0~1；尺寸由 label 渲染推导。 */
+export interface Hotspot {
+  id: number;
+  story_id: number;
+  page_number: number;
+  segment_seq: number | null;
+  x: number;
+  y: number;
+  shape: string;
+  kind: HotspotKind;
+  label: string | null;
+  payload: string | null;
+  source: HotspotSource;
+  confidence: number | null;
+}
+
+/** 新建/更新热区的请求体。 */
+export interface HotspotInput {
+  segment_seq?: number | null;
+  x: number;
+  y: number;
+  shape?: 'rect' | 'circle';
+  kind?: HotspotKind;
+  label?: string | null;
+  payload?: string | null;
+}

@@ -158,6 +158,23 @@ export async function initDb(): Promise<void> {
     /* 列已存在或无需添加，忽略 */
   }
 
+  // 开发阶段迁移：page_hotspots 旧结构含 w/h 估算尺寸列。尺寸已改为由 label 渲染推导
+  // （后端无法测量文字，存库尺寸必是垃圾值），检测到旧列则重建该表。
+  // 热区可由「AI 生成热区」一键重建，开发期无需保留旧行。
+  try {
+    const cols = db
+      .prepare(`PRAGMA table_info(page_hotspots)`)
+      .all() as Array<{ name?: string }>;
+    if (cols.some((c) => c?.name === "w")) {
+      db.exec(`DROP TABLE page_hotspots`);
+      db.exec(
+        fs.readFileSync(path.join(BACKEND_DIR, "src/db/schema.sql"), "utf-8")
+      );
+    }
+  } catch {
+    /* 表尚未建好，忽略 */
+  }
+
   // 宕机恢复：上次进程退出时仍在 generating 的配音方案，标记为 interrupted（可被「继续生成」复用）。
   try {
     db.exec(

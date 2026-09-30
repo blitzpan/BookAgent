@@ -2,7 +2,7 @@
 // 后端当前无法运行，支持 VITE_USE_MOCK 走本地示例数据联调。
 
 import { mockStories, mockBook } from "../mock/fixtures";
-import type { ReaderPage, ReaderSegment, ShelfBook } from "../types";
+import type { ReaderPage, ReaderSegment, ShelfBook, Hotspot } from "../types";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:3000";
 const USE_MOCK = import.meta.env.VITE_USE_MOCK === "true";
@@ -131,6 +131,40 @@ export async function getBook(storyId: number): Promise<ReaderPage[]> {
   }
 
   const nums = Array.from(textByPage.keys()).sort((a, b) => a - b);
+
+  // 热区：一次拉全，按 page_number 归并
+  const hotspotsByPage = new Map<number, ReaderPage["hotspots"]>();
+  try {
+    const hs = await fetchJson<{
+      hotspots: Array<{
+        page_number: number;
+        x: number;
+        y: number;
+        kind: string;
+        segment_seq: number | null;
+        payload: string | null;
+        label: string | null;
+      }>;
+    }>(`/api/stories/${storyId}/hotspots`);
+    for (const h of hs.hotspots) {
+      const list = hotspotsByPage.get(h.page_number) ?? [];
+      list.push({
+        x: h.x,
+        y: h.y,
+        type: h.kind,
+        kind: (["audio", "text", "link"].includes(h.kind)
+          ? h.kind
+          : "audio") as Hotspot["kind"],
+        segment_seq: h.segment_seq,
+        payload: h.payload,
+        label: h.label,
+      });
+      hotspotsByPage.set(h.page_number, list);
+    }
+  } catch {
+    /* 无热区时忽略 */
+  }
+
   return nums.map((n) => {
     const t = textByPage.get(n)!;
     return {
@@ -139,6 +173,7 @@ export async function getBook(storyId: number): Promise<ReaderPage[]> {
       textEn: t.text_en ?? null,
       imageUrl: assetUrl(imageByPage.get(n)),
       segments: segmentsByPage.get(n),
+      hotspots: hotspotsByPage.get(n),
     };
   });
 }

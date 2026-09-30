@@ -70,7 +70,7 @@ export interface AudioSet {
 /** run 只描述「版本产出状态」；执行中的 queued/running 属于 task。 */
 export type RunStatus = "running" | "completed" | "partial_failed" | "failed";
 
-export type TaskKind = "full" | "single_page" | "tts";
+export type TaskKind = "full" | "single_page" | "tts" | "hotspot";
 export type TaskStatus = "queued" | "running" | "completed" | "failed";
 
 export interface GenerationRun {

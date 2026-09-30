@@ -10,6 +10,8 @@ import type {
   GenerateConfig,
   AudioSet,
   Lang,
+  Hotspot,
+  HotspotInput,
 } from '../types';
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -124,4 +126,57 @@ export const api = {
         }>;
       }>;
     }>('GET', `/api/stories/${storyId}/book-audio${setId ? `?setId=${setId}` : ''}`),
+  // ===== 图片热区 =====
+  listHotspots: (storyId: number) =>
+    request<{ hotspots: Hotspot[] }>('GET', `/api/stories/${storyId}/hotspots`),
+  listPageHotspots: (storyId: number, pageNumber: number) =>
+    request<{ hotspots: Hotspot[] }>(
+      'GET',
+      `/api/stories/${storyId}/pages/${pageNumber}/hotspots`
+    ),
+  createHotspot: (storyId: number, pageNumber: number, input: HotspotInput) =>
+    request<Hotspot>('POST', `/api/stories/${storyId}/pages/${pageNumber}/hotspots`, input),
+  updateHotspot: (id: number, patch: Partial<HotspotInput>) =>
+    request<Hotspot>('PATCH', `/api/hotspots/${id}`, patch),
+  deleteHotspot: (id: number) =>
+    request<{ ok: true }>('DELETE', `/api/hotspots/${id}`),
+  autoGenerateHotspots: (storyId: number) =>
+    request<{ taskId: number }>(
+      'POST',
+      `/api/stories/${storyId}/hotspots/auto-generate`
+    ),
+  resumeHotspots: (storyId: number) =>
+    request<{ taskId: number }>('POST', `/api/stories/${storyId}/hotspots/resume`),
+  getHotspotTask: (storyId: number) =>
+    request<{ task: GenerationTask | null }>(
+      'GET',
+      `/api/stories/${storyId}/hotspots/task`
+    ),
+  savePageHotspots: (
+    storyId: number,
+    pageNumber: number,
+    payload: {
+      create?: HotspotInput[];
+      update?: Array<{ id: number } & Partial<HotspotInput>>;
+      delete?: number[];
+    }
+  ) =>
+    request<{ created: number; updated: number; deleted: number }>(
+      'POST',
+      `/api/stories/${storyId}/pages/${pageNumber}/hotspots/batch`,
+      payload
+    ),
+  getHotspotEditorData: (storyId: number) =>
+    request<{
+      pages: Array<{
+        pageNumber: number;
+        imagePath: string | null;
+        segments: Array<{
+          seq: number;
+          textZh: string;
+          textEn: string;
+          audioUrls: { zh?: string; en?: string };
+        }>;
+      }>;
+    }>('GET', `/api/stories/${storyId}/hotspot-editor`),
 };

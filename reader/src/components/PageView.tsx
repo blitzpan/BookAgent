@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { LangMode, ReaderPage, ReaderSegment } from "../types";
+import type { LangMode, ReaderPage, ReaderSegment, Hotspot } from "../types";
 
 interface Caption {
   lang: string;
@@ -76,9 +76,11 @@ export default function PageView({ page, lang, fontSize, onEnded }: Props) {
   const caps = captions(page, lang);
   const playlist = buildPlaylist(page.segments, lang);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const bubbleTimer = useRef<number | null>(null);
   const [playing, setPlaying] = useState(false);
   const [idx, setIdx] = useState(0);
   const [autoFlip, setAutoFlip] = useState(false);
+  const [bubble, setBubble] = useState<string | null>(null);
 
   // 语言/页面切换时重置播放状态
   useEffect(() => {
@@ -134,6 +136,42 @@ export default function PageView({ page, lang, fontSize, onEnded }: Props) {
     playCurrent(start);
   };
 
+  // 热区点击：audio 播放对应分段；text 弹气泡；link 新标签打开
+  const showBubble = (text: string | null) => {
+    if (!text) return;
+    setBubble(text);
+    if (bubbleTimer.current) window.clearTimeout(bubbleTimer.current);
+    bubbleTimer.current = window.setTimeout(() => setBubble(null), 3200);
+  };
+
+  const playHotspotAudio = (seq: number | null) => {
+    if (seq == null || !page.segments) return;
+    const seg = page.segments.find((s) => s.seq === seq);
+    if (!seg) return;
+    const langOrder: ("zh" | "en")[] = lang === "both" ? ["zh", "en"] : [lang];
+    const urls = langOrder
+      .map((l) => seg.audioUrls[l])
+      .filter(Boolean) as string[];
+    if (!urls.length) return;
+    let i = 0;
+    const playNext = () => {
+      const a = new Audio(urls[i]);
+      a.onended = () => {
+        if (++i < urls.length) playNext();
+      };
+      a.play().catch(() => {
+        if (++i < urls.length) playNext();
+      });
+    };
+    playNext();
+  };
+
+  const onHotspotClick = (h: Hotspot) => {
+    if (h.kind === "audio") playHotspotAudio(h.segment_seq);
+    else if (h.kind === "text") showBubble(h.payload || h.label || null);
+    else if (h.kind === "link" && h.payload) window.open(h.payload, "_blank");
+  };
+
   const langLabel =
     lang === "zh" ? "中" : lang === "en" ? "EN" : "中英";
   const progress =
@@ -152,19 +190,37 @@ export default function PageView({ page, lang, fontSize, onEnded }: Props) {
           <div className="page-image-empty">本页暂无图</div>
         )}
 
-        {page.hotspots?.map((h, i) => (
-          <button
-            key={i}
-            className="hotspot"
-            style={{
-              left: `${h.x * 100}%`,
-              top: `${h.y * 100}%`,
-              width: `${h.w * 100}%`,
-              height: `${h.h * 100}%`,
-            }}
-            aria-label={h.type}
-          />
-        ))}
+        {page.hotspots?.map((h, i) => {
+          // label 快照为「中文\n英文」，按当前语言模式显示对应行（与页面语言一致）
+          const parts = (h.label ?? "").split("\n");
+          const text =
+            lang === "zh"
+              ? (parts[0] ?? "")
+              : lang === "en"
+                ? (parts[1] ?? parts[0] ?? "")
+                : (h.label ?? "");
+          return (
+            <button
+              key={i}
+              className="hotspot"
+              style={{
+                left: `${h.x * 100}%`,
+                top: `${h.y * 100}%`,
+                maxWidth: "88%",
+                transform: "translate(-50%, -50%)",
+              }}
+              onClick={() => onHotspotClick(h)}
+              title={h.label ?? h.type}
+              aria-label={h.type}
+            >
+              {text}
+            </button>
+          );
+        })}
+
+        {bubble && (
+          <div className="hotspot-bubble">{bubble}</div>
+        )}
 
         {page.audioUrl ? (
           <button

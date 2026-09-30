@@ -3,11 +3,13 @@ import { api } from './api/client';
 import type { StorySummary } from './types';
 import StoryList from './components/StoryList';
 import StoryDetail from './components/StoryDetail';
+import HotspotSettings from './components/HotspotSettings';
 import { MagicWandIcon } from './components/icons/MagicWandIcon';
 
 const App: React.FC = () => {
   const [stories, setStories] = useState<StorySummary[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [hotspotStoryId, setHotspotStoryId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -38,7 +40,8 @@ const App: React.FC = () => {
               BookAgent 绘本管理
             </h1>
           </div>
-          {selectedId != null && (
+          {/* 热区设置页自带「← 返回」（回详情），此处隐藏，避免同屏出现两个返回按钮 */}
+          {selectedId != null && hotspotStoryId == null && (
             <button
               onClick={() => setSelectedId(null)}
               className="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-100 hover:opacity-80"
@@ -54,7 +57,12 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {selectedId == null ? (
+        {hotspotStoryId != null ? (
+          <HotspotSettings
+            storyId={hotspotStoryId}
+            onBack={() => setHotspotStoryId(null)}
+          />
+        ) : selectedId == null ? (
           <StoryList
             stories={stories}
             loading={loading}
@@ -67,6 +75,7 @@ const App: React.FC = () => {
             storyId={selectedId}
             onBack={() => setSelectedId(null)}
             onChanged={loadStories}
+            onOpenHotspots={setHotspotStoryId}
           />
         )}
       </div>

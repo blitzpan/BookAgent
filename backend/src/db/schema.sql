@@ -174,6 +174,29 @@ CREATE TABLE IF NOT EXISTS page_audio (
 );
 CREATE INDEX IF NOT EXISTS idx_audio_page ON page_audio(audio_set_id, page_id, lang);
 
+-- 图片热区：按 page_number 归属（规避 pages 改写重建导致 page_id 悬挂）。
+-- 只存中心点 (x,y) 归一化 0~1；尺寸不入库，由 label 文案渲染时自动推导。
+CREATE TABLE IF NOT EXISTS page_hotspots (
+  id          INTEGER PRIMARY KEY,
+  story_id    INTEGER NOT NULL,
+  page_number INTEGER NOT NULL,
+  segment_seq INTEGER,                 -- 绑定 page_segments.seq（audio/text 类型用）
+  x           REAL NOT NULL,           -- 中心点 x 归一化 0~1
+  y           REAL NOT NULL,           -- 中心点 y 归一化 0~1
+  -- 注意：不存 w/h。热区尺寸由 label 文案在渲染时自动推导（shrink-to-fit），
+  -- 后端无字体渲染环境、无法测量文字，任何存库的尺寸都只能是估算垃圾值。
+  shape       TEXT NOT NULL DEFAULT 'rect',   -- 'rect'|'circle'
+  kind        TEXT NOT NULL DEFAULT 'audio',  -- 'audio'|'text'|'link'
+  label       TEXT,                    -- 展示文案（拖入分段文本快照）
+  payload     TEXT,                    -- text/link 类型的自由内容
+  source      TEXT NOT NULL DEFAULT 'manual', -- 'ai'|'manual'
+  confidence  REAL,                    -- AI 置信度（可选，0~1）
+  created_at  TEXT,
+  updated_at  TEXT,
+  FOREIGN KEY (story_id) REFERENCES stories(id)
+);
+CREATE INDEX IF NOT EXISTS idx_hotspots_story ON page_hotspots(story_id, page_number);
+
 CREATE INDEX IF NOT EXISTS idx_characters_story ON characters(story_id, generation_run_id);
 CREATE INDEX IF NOT EXISTS idx_pages_story ON pages(story_id);
 CREATE INDEX IF NOT EXISTS idx_page_images_run ON page_images(generation_run_id, page_id);

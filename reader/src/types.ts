@@ -5,12 +5,13 @@ export type LangMode = "zh" | "en" | "both";
 export type ReadMode = "single" | "spread";
 
 export interface Hotspot {
-  x: number; // 归一化 0~1
+  x: number; // 中心点 归一化 0~1（尺寸不入库，由 label 渲染自动推导）
   y: number;
-  w: number;
-  h: number;
-  type: string;
-  payload: string;
+  type: string; // 兼容旧字段（= kind）
+  kind: "audio" | "text" | "link";
+  segment_seq: number | null;
+  payload: string | null;
+  label?: string | null;
 }
 
 /** 单页分段（双语、按场景区分角色/音色） */

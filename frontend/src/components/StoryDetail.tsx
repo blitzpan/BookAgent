@@ -19,6 +19,7 @@ interface Props {
   storyId: number;
   onBack: () => void;
   onChanged: () => void;
+  onOpenHotspots: (id: number) => void;
 }
 
 const ACTIVE = new Set(['queued', 'running']);
@@ -36,7 +37,7 @@ function AudioSetBadge({ status }: { status: string }) {
   return <span className={`text-xs px-2 py-0.5 rounded-full ${b.cls}`}>{b.label}</span>;
 }
 
-const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged }) => {
+const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspots }) => {
   const [detail, setDetail] = useState<{
     story: Story;
     pages: Page[];
@@ -64,6 +65,9 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged }) => {
   const [ttsMessage, setTtsMessage] = useState<string | null>(null);
   const [ttsError, setTtsError] = useState<string | null>(null);
   const [busyTts, setBusyTts] = useState(false);
+  // ===== 热区（AI 一键生成，异步任务）状态 =====
+  const [busyAi, setBusyAi] = useState(false);
+  const [aiTask, setAiTask] = useState<GenerationTask | null>(null);
   // 试听弹窗：当前正在试听的配音方案
   const [listen, setListen] = useState<{ id: number; name: string } | null>(null);
   // 当前选用方案的逐页音频（用于 PageCard 徽标试听）：pageNumber -> {zh[], en[]}
@@ -220,6 +224,106 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged }) => {
       setTtsError(e?.message ?? String(e));
     }
   };
+
+  // AI 生成热区：异步任务。这里只负责建任务，执行由后端 taskRunner 跑，进度靠轮询
+  const startAiHotspots = async () => {
+    setBusyAi(true);
+    setError(null);
+    try {
+      const { taskId } = await api.autoGenerateHotspots(storyId);
+      const { task } = await api.getTask(taskId);
+      setAiTask(task);
+      setMessage(`已创建热区任务 #${taskId}，后台逐页生成中…`);
+    } catch (e: any) {
+      setError(e?.message ?? String(e));
+    } finally {
+      setBusyAi(false);
+    }
+  };
+
+  // 继续生成：崩溃 / 部分失败后只补跑缺失页（保留已生成的 AI 热区）
+  const resumeAiHotspots = async () => {
+    setBusyAi(true);
+    setError(null);
+    try {
+      const { taskId } = await api.resumeHotspots(storyId);
+      const { task } = await api.getTask(taskId);
+      setAiTask(task);
+      setMessage(`已继续生成热区任务 #${taskId}（只补缺失页）…`);
+    } catch (e: any) {
+      setError(e?.message ?? String(e));
+    } finally {
+      setBusyAi(false);
+    }
+  };
+
+  // 单按钮状态机：idle 未生成 / running 生成中 / resumable 可继续 / done 已完成。
+  // 状态来自服务端的「最近一次热区任务」，刷新页面后依然正确。
+  const aiState: 'idle' | 'running' | 'resumable' | 'done' = !aiTask
+    ? 'idle'
+    : ['queued', 'running'].includes(aiTask.status)
+      ? 'running'
+      : aiTask.status === 'failed' || !!aiTask.last_error
+        ? 'resumable'
+        : 'done';
+  const aiButtonText =
+    aiState === 'running'
+      ? 'AI 生成中…'
+      : aiState === 'resumable'
+        ? '↻ 继续生成热区'
+        : aiState === 'done'
+          ? '✦ 重新生成热区'
+          : '✦ AI 生成热区';
+  const aiButtonTitle =
+    aiState === 'running'
+      ? '后台正在逐页生成，可先做别的'
+      : aiState === 'resumable'
+        ? '上次生成中断或有页失败，点击只补跑缺失的页'
+        : aiState === 'done'
+          ? '重新生成（覆盖 AI 热区，人工微调保留）'
+          : '调用 AI 为每页各分段自动定位热区';
+
+  // 轮询热区任务进度（与配音/生图轮询互不干扰）
+  useEffect(() => {
+    if (!aiTask || !['queued', 'running'].includes(aiTask.status)) return;
+    const timer = setInterval(async () => {
+      try {
+        const { task } = await api.getTask(aiTask.id);
+        setAiTask(task);
+        if (!['queued', 'running'].includes(task.status)) {
+          if (task.status === 'completed') {
+            setMessage(
+              task.last_error
+                ? `热区生成完成（${task.last_error}）`
+                : '热区生成完成，可进入「热区设置」微调。'
+            );
+          } else {
+            setError(`热区任务 #${task.id} 失败：${task.last_error ?? '未知原因'}`);
+          }
+        }
+      } catch {
+        /* 忽略单次轮询失败 */
+      }
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [aiTask]);
+
+  // 刷新 / 重新进入故事后，从服务端恢复热区任务状态：
+  // 否则刷新页面会丢失「正在生成 / 可继续生成」状态，只剩一个无从下手的按钮。
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getHotspotTask(storyId)
+      .then(({ task }) => {
+        if (!cancelled) setAiTask(task);
+      })
+      .catch(() => {
+        /* 恢复失败按「未生成」处理 */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [storyId]);
 
   const handleResumeSet = async (setId: number) => {
     setBusyTts(true);
@@ -440,6 +544,25 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged }) => {
           className="px-4 py-2 rounded-lg bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-200 hover:bg-violet-200 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           ＋ 新建配音
+        </button>
+        {/* 热区：单按钮，按任务状态切换文案与动作（后台异步任务） */}
+        <button
+          disabled={busyAi || aiState === 'running'}
+          onClick={aiState === 'resumable' ? resumeAiHotspots : startAiHotspots}
+          title={aiButtonTitle}
+          className={`px-4 py-2 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed ${
+            aiState === 'resumable'
+              ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-200 hover:bg-amber-200'
+              : 'bg-sky-100 dark:bg-sky-900/40 text-sky-700 dark:text-sky-200 hover:bg-sky-200'
+          }`}
+        >
+          {aiButtonText}
+        </button>
+        <button
+          onClick={() => onOpenHotspots(storyId)}
+          className="px-4 py-2 rounded-lg bg-purple-600 text-white hover:bg-purple-700"
+        >
+          热区设置
         </button>
         <button
           disabled={isGenerating}

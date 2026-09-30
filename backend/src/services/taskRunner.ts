@@ -9,6 +9,7 @@ import {
   recoverTasks,
   finishTask,
 } from "./generationService";
+import { runHotspotGeneration } from "./hotspotService";
 
 const running = new Set<number>();
 
@@ -20,6 +21,7 @@ export async function runTask(taskId: number): Promise<void> {
   running.add(taskId);
   try {
     if (task.kind === "tts") await runTtsGeneration(taskId);
+    else if (task.kind === "hotspot") await runHotspotGeneration(taskId);
     else if (task.kind === "single_page") await runSinglePage(taskId);
     else await runFullGeneration(taskId);
   } catch (err: any) {
