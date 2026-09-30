@@ -9,6 +9,23 @@ describe("mock provider 金钱安全", () => {
     expect(getVisionBackend().id).toBe("mock");
   });
 
+  it("总开关 MOCK_AI=1 优先级最高，关闭后回落到分角色配置", () => {
+    const saved = { ai: process.env.MOCK_AI, text: process.env.TEXT_PROVIDER };
+    try {
+      process.env.TEXT_PROVIDER = "gemini"; // 故意配成真实 provider
+      process.env.MOCK_AI = "1";
+      expect(getTextBackend().id).toBe("mock"); // 总开关覆盖分角色配置
+
+      delete process.env.MOCK_AI;
+      expect(getTextBackend().id).toBe("gemini"); // 关闭总开关后按分角色配置走
+    } finally {
+      if (saved.text === undefined) delete process.env.TEXT_PROVIDER;
+      else process.env.TEXT_PROVIDER = saved.text;
+      if (saved.ai === undefined) delete process.env.MOCK_AI;
+      else process.env.MOCK_AI = saved.ai;
+    }
+  });
+
   it("generateImage 返回合法 dataURL，不触网", async () => {
     const url = await getImageBackend().generateImage({
       prompt: "x",

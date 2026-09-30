@@ -1,5 +1,7 @@
 // 与数据库表对应的实体类型（运行时从 better-sqlite3 读出的是普通对象，这里仅做形状约束）。
 
+import type { GenerationConfig } from "./constants/generationConfig";
+
 export interface Story {
   id: number;
   user_title: string | null;
@@ -13,6 +15,8 @@ export interface Story {
   safety_result: string | null; // JSON
   rewrite_result: string | null; // JSON
   inspiration_image_path: string | null;
+  generation_config: string | null; // JSON 生图参数
+  current_run_id: number | null; // 当前生效版本
   created_at: string | null;
   updated_at: string | null;
   deleted_at: string | null;
@@ -38,23 +42,16 @@ export interface Page {
   lock_text: string | null;
 }
 
-export type RunScope = "full" | "single_page";
-export type RunStatus =
-  | "queued"
-  | "running"
-  | "completed"
-  | "partial_failed"
-  | "failed"
-  | "interrupted";
+/** run 只描述「版本产出状态」；执行中的 queued/running 属于 task。 */
+export type RunStatus = "running" | "completed" | "partial_failed" | "failed";
+
+export type TaskKind = "full" | "single_page";
+export type TaskStatus = "queued" | "running" | "completed" | "failed";
 
 export interface GenerationRun {
   id: number;
   story_id: number;
-  scope: RunScope;
-  target_page_id: number | null;
   status: RunStatus;
-  progress: string | null; // JSON {total,done,failed}
-  last_error: string | null;
   frame_threshold: number | null;
   max_frame_retry: number | null;
   sequence_threshold: number | null;
@@ -70,6 +67,21 @@ export interface GenerationRun {
   created_at: string | null;
 }
 
+export interface GenerationTask {
+  id: number;
+  story_id: number;
+  run_id: number | null;
+  page_id: number | null;
+  kind: TaskKind;
+  status: TaskStatus;
+  progress: string | null; // JSON {total,done,failed}
+  params_json: string | null;
+  last_error: string | null;
+  created_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
 export type ImageKind = "initial" | "retry" | "manual_new" | "redraw";
 
 export interface PageImage {
@@ -77,6 +89,7 @@ export interface PageImage {
   page_id: number;
   story_id: number;
   generation_run_id: number;
+  task_id: number | null;
   is_default: number; // 0/1
   kind: ImageKind | null;
   prompt_used: string | null;
@@ -120,16 +133,6 @@ export interface CreateStoryInput {
   inspiration_image_path?: string;
 }
 
-// 生图配置（POST /generate 请求体，落 snapshot 进 generation_runs）
-export interface GenerateConfig {
-  frame_threshold?: number;
-  max_frame_retry?: number;
-  sequence_threshold?: number;
-  max_sequence_retry?: number;
-  initial_retry_budget?: number;
-  text_provider?: string;
-  image_provider?: string;
-  vision_provider?: string;
-  aspect_ratio?: string;
-  image_size?: string;
-}
+// 生图配置的一次性覆盖（POST /generate 请求体，可选；缺省读 stories.generation_config）。
+// 模型不再由请求指定：provider 以 .env 为准，实际生效值落 generation_runs 留痕。
+export type GenerateConfig = Partial<GenerationConfig>;

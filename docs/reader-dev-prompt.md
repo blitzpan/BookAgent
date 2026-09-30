@@ -2,8 +2,9 @@
 
 你是一名资深前端工程师。请在当前仓库（BookAgent，绘本生成系统）中**新建一个独立的只读展示前端** `reader/`，用于向读者（儿童 / 家长）展示已发布的成品绘本。本任务只做「展示」，不做任何创作 / 管理功能。
 
-> ⚠️ 重要前提：本仓库**后端当前无法运行**（无运行环境 / 无数据），因此你**不能**用 curl 实测接口。
-> 你**必须**通过阅读后端源码来确定每个接口的**真实响应字段名与结构**，并以源码为准（设计文档 `design/接口设计.md` 的响应示例已过时、与代码不符，仅作背景，不可照抄）。
+> ✅ 状态：`reader/` 已按本文档实现完成，后端两处配套改动（CORS、`?status=` 已发布过滤）也已落地。
+> 后端**可在本地直接运行**：`cd backend && npm run dev`（配合 `MOCK_AI=1` 可零成本跑通全链路），因此可以用 `curl` / 浏览器实测接口。
+> 字段结构仍**以源码为准**（设计文档 `design/接口设计.md` 的响应示例已过时，不可照抄）。
 > 优先阅读这些文件确认契约：`backend/src/routes/stories.ts`、`backend/src/routes/runs.ts`、`backend/src/routes/pageImages.ts`、`backend/src/services/storyService.ts`（listStories / getStoryDetail）、`backend/src/services/generationService.ts`（getRunDetail / listRunsForStory）、`backend/src/types.ts`、`backend/src/constants/status.ts`。
 
 ## 0. 项目背景（已有资产，勿重造）
@@ -34,7 +35,7 @@
 实现前先读 §0 列出的源码文件，确认每个响应的真实结构。下面给出**已从源码核对过**的结构（仍建议你再核对一遍，因为代码可能已变）：
 
 ### 2.1 `GET /api/stories`
-- 路由：`stories.ts` 直接 `return { stories: listStories() }`，**不接受任何 query 参数**（当前实现没有 status 过滤！见 §4）。
+- 路由：`stories.ts` 支持 `?status=` 过滤（`listStories(status)`）；无参时返回全部未删除（兼容管理壳）。reader 书架固定请求 `?status=审批通过的作品`。
 - 真实结构：
 ```
 { "stories": [
@@ -49,7 +50,8 @@
 ```
 {
   "story": { "id":number, "user_title":string|null, "original_text":string, "refined_text":string|null,
-             "style":string|null, "target_page_count":number|null, "status":string, "created_at":string|null, ... },
+             "style":string|null, "target_page_count":number|null, "status":string, "created_at":string|null,
+             "current_run_id":number|null, "generation_config":object, ... },
   "pages": [ { "id":number, "story_id":number, "page_number":number,
                "text_zh":string|null, "text_en":string|null, "image_prompt":string|null, "lock_text":string|null } ]
 }
@@ -61,15 +63,15 @@
 
 ### 2.3 `GET /api/stories/:id/runs`
 - 真实结构：`{ "runs": GenerationRun[] }`，按 `id DESC`（最新在前）。
-- `GenerationRun` 是 DB 原行（snake_case：`id, story_id, scope, status, progress, frame_threshold, ...`）。
-- ⚠️ **`progress` 是 JSON 字符串**（如 `"{\"total\":6,\"done\":6,\"failed\":0}"`），不是对象，使用前需 `JSON.parse`。
+- `GenerationRun` 是 DB 原行（snake_case：`id, story_id, status, frame_threshold, max_frame_retry, sequence_threshold, max_sequence_retry, initial_retry_budget, text_provider, image_provider, vision_provider, aspect_ratio, image_size, started_at, finished_at, created_at`）。
+- ⚠️ run **已无 `scope` / `progress` / `last_error`**：进度与重试属于「执行」，归 `generation_tasks`（见 `GET /api/tasks/:taskId` 的 `task.progress`，那才是 JSON 字符串，需 `JSON.parse`）。
 
 ### 2.4 `GET /api/runs/:runId`
 - 路由：返回 `getRunDetail(runId)`，无则 404 `{ error }`。
 - 真实结构（**这与 design 文档示例完全不同，以这里为准**）：
 ```
 {
-  "run": GenerationRun,                 // 同上，progress 为 JSON 字符串
+  "run": GenerationRun,                 // 同 2.3（无 scope / progress）
   "characters": [                       // 角色锚图（本项目阅读器不用，但结构在此）
     { "id":number, "char_key":string, "name":string, "visual_description":string, "sheet_image_path":string }
   ],
@@ -79,8 +81,8 @@
       "default_image": {                // 可能为 null（该页无默认图）！
         "id":number, "is_default":number, "kind":string,
         "combined_score":number, "identity_score":number, "frame_score":number,
-        "image_path":string, "attempt_index":number, "created_at":string
-      } | null,
+        "image_path":string, "attempt_index":number, "generation_run_id":number, "task_id":number, "created_at":string
+      } | null,                         // 候选图已按 run 隔离：一页在不同版本各有自己的默认图
       "candidates": [ /* 同 default_image 结构的数组，含所有候选图 */ ]
     }
   ],
@@ -127,15 +129,17 @@ reader/
 
 ### 3.1 推荐的数据获取流程（阅读器打开某书）
 1. `GET /api/stories/:id` → 拿到 `story` 元信息 + 每页文本 `pages[]`（含 `page_number`、`text_zh`、`text_en`）。
-2. `GET /api/stories/:id/runs` → 取最新一条 `status` 为 `completed` 或 `partial_failed` 的 run（列表已按 id DESC）。
+2. 取版本：`runs.runs.find(r => r.id === story.current_run_id)`（步骤 1 的 `story.current_run_id`）；缺失时才回退「最近一条 `completed` / `partial_failed`」。
 3. `GET /api/runs/:runId` → 拿到每页 `default_image.image_path`。
 4. 以 `page_number` 为键，把步骤 1 的文本与步骤 3 的图片合并成 `ReaderPage[]`（见 §5）。
 - 书架封面：因 `GET /api/stories` 不带图，封面可二选一：①惰性加载——对每本书取最新 run 的 `pages[0].default_image.image_path`（多一次调用，建议并发 + 占位）；②先用标题卡占位，进入阅读器再加载图。推荐 ② 简单优先，① 作为增强。
 
 ## 4. 后端需配套的两处改动（在 backend/ 内修改，保持最小改动）
 
-1. **CORS**：`backend/src/index.ts` 启用 `@fastify/cors`（或等价），放行 `reader` 的来源（开发期可先放行 `*` 或 `http://localhost:5173`，生产按部署域名收紧）。改完跑 `cd backend && npx tsc --noEmit` 确认 0 error。
-2. **已发布过滤（必须新增，当前不存在）**：当前 `GET /api/stories` 直接 `listStories()` 且**忽略 query、不过滤 status、会返回草稿**。请给 `storyService.listStories` 增加可选 `status` 参数，`GET /api/stories` 路由支持 `?status=审批通过的作品`（或新增公开端点 `GET /api/public/stories`）；reader 书架只请求已发布，确保草稿 / 未审不外泄。若实现时选择「前端按 status 过滤」，则**不能**只靠前端隐藏——仍需后端过滤，因为前端过滤仍会把草稿数据发到客户端。
+> 以下两项**均已完成**，此处保留作为设计记录。
+
+1. **CORS**：已在 `backend/src/app.ts` 用 `onRequest` 钩子手动设置响应头实现（**零依赖，未引入 `@fastify/cors`**），放行方法 `GET,POST,PATCH,DELETE,OPTIONS`，来源由 `CORS_ORIGIN` 控制（默认 `*`，生产按部署域名收紧）。
+2. **已发布过滤**：`storyService.listStories(status?)` 已支持可选 `status` 参数，`GET /api/stories` 支持 `?status=审批通过的作品`；无参时行为不变（管理壳兼容）。过滤在**后端**完成，草稿不会下发到客户端；reader 书架固定请求 `?status=审批通过的作品`。
    - 注意：不要改动管理壳 `frontend/` 的任何业务逻辑；后端改动应同时兼容现有管理壳调用（管理壳可能用无参调用，需保证无参时行为不变）。
 
 ## 5. 前端类型预留（关键，决定未来可扩展性）
@@ -167,11 +171,12 @@ interface Hotspot { x:number; y:number; w:number; h:number; type:string; payload
 7. 移动优先样式 + 768px 断点跨页；手机滑动翻页（手写 touch 或轻量手势）。
 8. 音频 / 热区预留位渲染（降级逻辑）。
 
-## 7. 校验（受「后端无法运行」限制，务实处理）
+## 7. 校验
 
-- 后端：`cd backend && npx tsc --noEmit` 必须 0 error（这是后端改动唯一可在无运行环境下做的硬校验）。
+- 后端：`cd backend && npm run typecheck` 必须 0 error；`npm run test`（20 个用例）应全绿。
 - 前端：`cd reader && npm install && npm run build` 必须通过；`npm run dev` 在浏览器 / 响应式模拟器中验证：手机宽度单页滑动、Pad 宽度双页跨页、双语切换、字号调节、空 / 缺图 / 网络错误兜底不白屏。
-- 接口集成：因后端无法运行，端到端「书架 → 打开 → 翻页」需一个**可运行的 backend + 至少一条已发布数据**才能实测。请在前端用**本地 mock / fixture**（如把 §2 的真实结构写成示例 JSON 注入）来完成 UI 联调，并在报告中说明「运行时集成需在后端可运行环境验证」。不要为了联调而擅自改动数据库或伪造后端数据文件（除非明确说明）。
+- 接口集成：端到端「书架 → 打开 → 翻页」可直接实测：起 backend（`npm run dev`，`MOCK_AI=1` 零成本造数据）+ reader（`npm run dev`，5173），按 §8 方式造一本已发布书后刷新书架。
+- 后端起不来时的替代联调：`reader/.env` 设 `VITE_USE_MOCK=true`，走 `reader/src/mock/fixtures.ts` 的本地示例数据（仅验 UI，不验接口）。
 
 ## 8. 禁止 / 范围外
 

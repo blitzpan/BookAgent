@@ -3,6 +3,8 @@ import type {
   Story,
   Page,
   GenerationRun,
+  GenerationTask,
+  GenerationConfig,
   RunDetail,
   GenerateConfig,
 } from '../types';
@@ -46,6 +48,16 @@ export const api = {
   }) => request<{ id: number }>('POST', '/api/stories', input),
   getStory: (id: number) =>
     request<{ story: Story; pages: Page[] }>('GET', `/api/stories/${id}`),
+  updateStory: (
+    id: number,
+    body: {
+      user_title?: string | null;
+      style?: string | null;
+      target_page_count?: number | null;
+      inspiration_image?: string;
+      generation_config?: Partial<GenerationConfig>;
+    }
+  ) => request<{ story: Story }>('PATCH', `/api/stories/${id}`, body),
   rewriteStory: (id: number) =>
     request<{
       storyId: number;
@@ -54,13 +66,19 @@ export const api = {
       pageCount: number;
       safetyNote: string | null;
     }>('POST', `/api/stories/${id}/rewrite`),
-  generate: (id: number, cfg: GenerateConfig) =>
-    request<{ runId: number }>('POST', `/api/stories/${id}/generate`, cfg),
+  generate: (id: number, cfg?: GenerateConfig) =>
+    request<{ taskId: number; runId: number }>(
+      'POST',
+      `/api/stories/${id}/generate`,
+      cfg ?? {}
+    ),
   listRuns: (id: number) =>
     request<{ runs: GenerationRun[] }>('GET', `/api/stories/${id}/runs`),
   getRun: (runId: number) => request<RunDetail>('GET', `/api/runs/${runId}`),
+  getTask: (taskId: number) =>
+    request<{ task: GenerationTask }>('GET', `/api/tasks/${taskId}`),
   addPageImage: (pageId: number, body: { kind?: string }) =>
-    request<{ runId: number }>('POST', `/api/pages/${pageId}/images`, body),
+    request<{ taskId: number }>('POST', `/api/pages/${pageId}/images`, body),
   setDefaultImage: (imageId: number) =>
     request<{ ok: true }>('PATCH', `/api/page-images/${imageId}`),
   publish: (id: number) =>

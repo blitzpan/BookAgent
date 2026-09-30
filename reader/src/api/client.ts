@@ -68,13 +68,17 @@ export async function getPublishedStories(): Promise<ShelfBook[]> {
 export async function getBook(storyId: number): Promise<ReaderPage[]> {
   if (USE_MOCK) return mockBook(storyId);
 
-  const detail = await fetchJson<{ story: unknown; pages: { page_number: number; text_zh: string | null; text_en: string | null }[] }>(
-    `/api/stories/${storyId}`
-  );
+  const detail = await fetchJson<{
+    story: { current_run_id: number | null };
+    pages: { page_number: number; text_zh: string | null; text_en: string | null }[];
+  }>(`/api/stories/${storyId}`);
   const runs = await fetchJson<{ runs: ApiRun[] }>(`/api/stories/${storyId}/runs`);
-  const run = runs.runs.find(
-    (r) => r.status === "completed" || r.status === "partial_failed"
-  );
+  // 优先用故事当前生效版本；没有则退回"最近一个已产出的版本"
+  const run =
+    runs.runs.find((r) => r.id === detail.story.current_run_id) ??
+    runs.runs.find(
+      (r) => r.status === "completed" || r.status === "partial_failed"
+    );
 
   const textByPage = new Map<number, { text_zh: string | null; text_en: string | null }>();
   for (const p of detail.pages) textByPage.set(p.page_number, p);

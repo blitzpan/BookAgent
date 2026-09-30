@@ -1,4 +1,7 @@
-> ⚠️ **文档更新说明（2026-09）**：原仓库已重构为**多模型可插拔**（详见《BookAgent简介与配置说明.md》第二章）。因此本文中"模型硬编码 Gemini""API_KEY/VITE_ 注入坑"等描述已不适用——现在通过 `vite.config.ts` 的 `define` 注入 `process.env.*`，并支持 `gemini / qwen / bailian / seedream / ark` 多 provider，可按角色独立配置（含国内方案）。`qwen` 与 `bailian` 是同一后端（阿里百炼：通义千问文本 + Qwen-VL 视觉 + 通义万相图像）。其余差距 / 可借鉴分析仍然有效。另：`buildRefsForPage` 已不再把上一页整图作为风格参考（图像模型会整体复刻参考图构图，导致第 N 页复制第 N-1 页），现仅传本页所需角色锚图，跨页风格统一由全局 `style` + 角色锚图保证——第三节、第四节、第七节相应描述已同步修正。
+> ⚠️ **文档更新说明（2026-09）**：
+> 1. 本仓库已从「纯前端 Gemini demo」重构为 **monorepo + 后端**（`backend/` Fastify + sql.js 持久化，`frontend/` 管理壳，`reader/` 阅读端），并支持**多模型可插拔**（详见《BookAgent简介与配置说明.md》§二）。因此本文中「纯前端 / 无后端 / 无持久化 / 浏览器直连模型 API / `vite.config.ts` 的 `define` 注入」等描述已不适用——现在所有 AI 调用都在 **backend（Node）进程内**发出，配置由 `backend/src/env.ts` 自动读取 `.env.local`，模型按角色走 `gemini / qwen / bailian / seedream / ark / mock`（`mock` 为本地零成本假数据，由 `MOCK_AI=1` 开启）。`qwen` 与 `bailian` 是同一后端（阿里百炼）。
+> 2. 本报告对**上游开源 BookAgent** 的能力差距分析仍有效；但「我们自己的仓库」已补齐：**交互式阅读器（`reader/`，翻页 + 双语 + 字号，见《BookAgent简介与配置说明.md》§3.5）** 与 **资产结构化输出（库表 + `assets/` 落盘 + `/assets/*` 访问，见《数据库表结构与使用场景.md》）**。仍缺失：中英双语 TTS、图片热区（代码中为预留位）。
+> 3. `buildRefsForPage` 已不再把上一页整图作为风格参考（图像模型会整体复刻参考图构图，导致第 N 页复制第 N-1 页），现仅传本页所需角色锚图；跨页风格统一由全局 `style` + 角色锚图保证——第三节、第四节、第七节相应描述已同步修正。
 
 # BookAgent 代码分析报告
 
@@ -11,11 +14,11 @@
 
 | 维度 | 情况 |
 | --- | --- |
-| 框架 | React 19 + Vite 6，**纯前端，无后端服务** |
-| 模型 | **多模型可插拔**（改造后）：默认 `gemini`；国内可走 `ark`（单一 Key 覆盖 TEXT/IMAGE/VISION）或 `qwen`(文本/视觉)+`seedream`(图像)。详见《BookAgent简介与配置说明.md》§二 |
-| 调用方式 | 浏览器端调用；Gemini 用 `@google/genai` SDK，国内模型走 Vite 开发代理转发到对应 OpenAI 兼容端点 |
-| 关键文件 | `services/geminiService.ts`（全部 AI 逻辑编排）、`App.tsx`（UI+主流程编排）、`services/providers/`（各模型后端）、`types.ts` |
-| 资产形态 | 仅在内存中渲染 + 浏览器端 `canvas` 下载 PNG，**无结构化资产输出、无持久化** |
+| 框架 | React 19 + Vite 6 **前端**（管理壳 `frontend/` + 阅读端 `reader/`）+ **Fastify 后端 `backend/`**（承载全部 AI 调用与持久化） |
+| 模型 | **多模型可插拔**：默认 `gemini`；国内可走 `ark`（单一 Key 覆盖 TEXT/IMAGE/VISION）或 `bailian/qwen`(文本/视觉)+`seedream`(图像)；本地开发用 `mock`（零成本）。详见《BookAgent简介与配置说明.md》§二 |
+| 调用方式 | **后端 Node 进程内调用**（经 `backend/src/providers/` 抽象），前端只调后端 REST；不经过浏览器，无 CORS 问题 |
+| 关键文件 | `backend/src/services/geminiService.ts`（9 个 AI 调用编排）、`backend/src/services/generationService.ts`（整书/单页生图编排：版本 run + 执行 task）、`backend/src/services/storyService.ts`、`backend/src/providers/`（各模型后端）、`backend/src/constants/generationConfig.ts`（生图参数单一来源）；前端 `frontend/src/App.tsx`、`reader/src/` |
+| 资产形态 | **持久化**：sql.js 库（`backend/data/bookagent.db`）+ 图片落盘 `backend/data/assets/` 并经 `/assets/*` 访问；产出结构化的 `stories/pages/page_images/characters` 等资产 |
 
 结论：它是**一个"生成闭环"的研究型 demo**，不是产品化系统。
 
@@ -27,7 +30,7 @@
 | --- | --- | --- |
 | 1. AI 绘本内容生成（含角色一致性） | ✅ 最强 | 这是它的核心卖点，一致性做得很完整（见第三节） |
 | 2. 中英双语配音合成（TTS） | ❌ 完全缺失 | 没有任何音频/TTS 代码 |
-| 3. 交互式 Web 阅读器 | ❌ 仅画廊 | 只有横向滚动的图片+文字卡片，**无播放器、无自动/手动播放、无翻页状态机** |
+| 3. 交互式 Web 阅读器 | 🟡 部分（我们已建 `reader/`） | 上游仅画廊；本仓库已新增阅读端：书架 + 翻页 + 双语切换 + 字号调节（见《BookAgent简介与配置说明.md》§3.5） |
 | 4. 图片热区交互 | ❌ 完全缺失 | 无任何热区概念 |
 | 5. 双语资源与状态管理 | ❌ 完全缺失 | 仅英文故事输入，无语言切换、无双语文本/音频/状态衔接 |
 | 6. 资产输出与消费 | ⚠️ 部分 | 能产出图片+故事文本并下载 PNG，但**无结构化资产包**（图+文+音+热区配置）供阅读端消费 |
@@ -38,7 +41,7 @@
 
 ## 三、核心流水线（主生成闭环）
 
-`App.tsx` 的 `handleGenerateClick` 编排，逐页复用 `geminiService.ts`：
+编排入口：`backend/src/services/storyService.ts`（建故事/改写/配置/状态机）与 `backend/src/services/generationService.ts`（整书/单页生图闭环），逐页复用 `geminiService.ts` 的 9 个 AI 调用：
 
 1. **文本安全校验** `safetyCheckText(check→sanitize)`
 2. **评审+改写** `refineStoryForPageCount`：判断 `good_polish` / `rewrite`，把故事调整到目标页数（1–20），约束"常驻角色 ≤5 个"

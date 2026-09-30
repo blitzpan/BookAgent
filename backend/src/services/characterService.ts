@@ -25,6 +25,16 @@ export function getCharacters(storyId: number): CharacterSheet[] {
     .all(storyId) as CharacterSheet[];
 }
 
+/** 锚图属于「版本」：每个 run 一套，避免不同版本串用角色外观。 */
+export function getCharactersByRun(runId: number): CharacterSheet[] {
+  return db
+    .prepare(
+      `SELECT id, char_key, name, visual_description, sheet_image_path
+       FROM characters WHERE generation_run_id = ? ORDER BY id ASC`
+    )
+    .all(runId) as CharacterSheet[];
+}
+
 function attachDataUrls(
   storyId: number,
   chars: CharacterSheet[]
@@ -55,7 +65,7 @@ export async function ensureAnchors(
   characters: CharacterSheet[];
   extracted: ExtractedCharacter[];
 }> {
-  const existing = getCharacters(storyId);
+  const existing = getCharactersByRun(runId);
   if (existing.length) {
     const chars = attachDataUrls(storyId, existing);
     return {

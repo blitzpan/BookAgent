@@ -1,5 +1,16 @@
 // 与后端 src/types.ts 对齐的前端类型（只保留 UI 用得到的字段）。
 
+/** 生图配置（与后端 constants/generationConfig.ts 对齐）。 */
+export interface GenerationConfig {
+  frame_threshold: number;
+  max_frame_retry: number;
+  sequence_threshold: number;
+  max_sequence_retry: number;
+  initial_retry_budget: number;
+  aspect_ratio: string;
+  image_size: string;
+}
+
 export interface StorySummary {
   id: number;
   user_title: string | null;
@@ -21,9 +32,25 @@ export interface Story {
   safety_result: string | null;
   rewrite_result: string | null;
   inspiration_image_path: string | null;
+  generation_config: GenerationConfig | null;
+  current_run_id: number | null;
   created_at: string | null;
   updated_at: string | null;
   deleted_at: string | null;
+}
+
+/** 一次异步执行（整书生图 / 单页补画）。 */
+export interface GenerationTask {
+  id: number;
+  story_id: number;
+  run_id: number | null;
+  page_id: number | null;
+  kind: 'full' | 'single_page';
+  status: 'queued' | 'running' | 'completed' | 'failed';
+  progress: string | null;
+  last_error: string | null;
+  created_at: string | null;
+  finished_at: string | null;
 }
 
 export interface Page {
@@ -36,14 +63,11 @@ export interface Page {
   lock_text: string | null;
 }
 
+/** 一次整书生成 = 一个版本。进度/错误属于任务，不在这里。 */
 export interface GenerationRun {
   id: number;
   story_id: number;
-  scope: string;
-  target_page_id: number | null;
   status: string;
-  progress: string | null;
-  last_error: string | null;
   frame_threshold: number | null;
   max_frame_retry: number | null;
   sequence_threshold: number | null;
@@ -102,15 +126,5 @@ export interface RunDetail {
   sequence_checks: SequenceCheck[];
 }
 
-export interface GenerateConfig {
-  frame_threshold?: number;
-  max_frame_retry?: number;
-  sequence_threshold?: number;
-  max_sequence_retry?: number;
-  initial_retry_budget?: number;
-  text_provider?: string;
-  image_provider?: string;
-  vision_provider?: string;
-  aspect_ratio?: string;
-  image_size?: string;
-}
+/** 生图时的可选一次性覆盖（一般不传，用故事配置）。 */
+export type GenerateConfig = Partial<GenerationConfig>;

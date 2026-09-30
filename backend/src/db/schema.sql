@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS stories (
   safety_result       TEXT,                       -- JSON:{passed,isSafe,reason}
   rewrite_result      TEXT,                       -- JSON:{mode,feedback}
   inspiration_image_path TEXT,                    -- 灵感图(磁盘相对路径),仅影响分页
+  generation_config   TEXT,                       -- JSON 生图参数(见 constants/generationConfig.ts)
+  current_run_id      INTEGER,                    -- 当前生效的整书 run(版本指针)
   created_at          TEXT,
   updated_at          TEXT,
   deleted_at          TEXT
@@ -47,20 +49,18 @@ CREATE TABLE IF NOT EXISTS pages (
   FOREIGN KEY (story_id) REFERENCES stories(id)
 );
 
+-- 一次「整书生成」的版本记录：产物归属 + 版本参数快照 + 产出状态。
+-- 进度/错误/重试/恢复属于「执行」，归 generation_tasks。
 CREATE TABLE IF NOT EXISTS generation_runs (
   id                  INTEGER PRIMARY KEY,
   story_id            INTEGER NOT NULL,
-  scope               TEXT NOT NULL DEFAULT 'full',  -- full(整书)/single_page(单页补画) (R9)
-  target_page_id      INTEGER,                        -- scope=single_page 时指向目标页 (R9)
-  status              TEXT NOT NULL DEFAULT 'queued',  -- queued/running/completed/partial_failed/failed/interrupted
-  progress            TEXT,    -- JSON:{total,done,failed}
-  last_error          TEXT,
+  status              TEXT NOT NULL DEFAULT 'running',  -- running/completed/partial_failed/failed
   frame_threshold     REAL DEFAULT 0.75,
   max_frame_retry     INTEGER DEFAULT 3,   -- 单页手动重画(manual_new)预算;首跑由 initial_retry_budget 控制
   sequence_threshold  REAL DEFAULT 0.8,
   max_sequence_retry  INTEGER DEFAULT 1,
   initial_retry_budget INTEGER DEFAULT 1,  -- 首跑每页生成尝试次数上限(按需哲学核心)
-  text_provider       TEXT,
+  text_provider       TEXT,                       -- 实际生效的 provider(不再是请求传入值)
   image_provider      TEXT,
   vision_provider     TEXT,
   aspect_ratio        TEXT,
@@ -71,11 +71,30 @@ CREATE TABLE IF NOT EXISTS generation_runs (
   FOREIGN KEY (story_id) REFERENCES stories(id)
 );
 
+-- 每次「异步执行」的记录：整书生成 / 单页补画 / 将来的批量重画。
+-- 与 run 的关系：整书任务创建并归属于某个 run；补画任务挂在已有 run 上（不新建 run）。
+CREATE TABLE IF NOT EXISTS generation_tasks (
+  id                  INTEGER PRIMARY KEY,
+  story_id            INTEGER NOT NULL,
+  run_id              INTEGER,                        -- 归属版本；整书任务创建时即有
+  page_id             INTEGER,                        -- kind=single_page 时的目标页
+  kind                TEXT NOT NULL,                  -- full / single_page
+  status              TEXT NOT NULL DEFAULT 'queued', -- queued/running/completed/failed
+  progress            TEXT,                           -- JSON:{total,done,failed}
+  params_json         TEXT,                           -- 本次执行参数快照(可覆盖版本参数)
+  last_error          TEXT,
+  created_at          TEXT,
+  started_at          TEXT,
+  finished_at         TEXT,
+  FOREIGN KEY (story_id) REFERENCES stories(id)
+);
+
 CREATE TABLE IF NOT EXISTS page_images (
   id                  INTEGER PRIMARY KEY,
   page_id             INTEGER NOT NULL,
   story_id            INTEGER NOT NULL,
   generation_run_id   INTEGER NOT NULL,
+  task_id             INTEGER,                        -- 产出该图的执行任务
   is_default          INTEGER DEFAULT 0,
   kind                TEXT,    -- initial/retry/manual_new/redraw
   prompt_used         TEXT,
@@ -111,3 +130,5 @@ CREATE INDEX IF NOT EXISTS idx_characters_story ON characters(story_id, generati
 CREATE INDEX IF NOT EXISTS idx_pages_story ON pages(story_id);
 CREATE INDEX IF NOT EXISTS idx_page_images_run ON page_images(generation_run_id, page_id);
 CREATE INDEX IF NOT EXISTS idx_runs_story ON generation_runs(story_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_story ON generation_tasks(story_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON generation_tasks(status);

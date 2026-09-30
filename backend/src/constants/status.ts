@@ -38,9 +38,9 @@ const STORY_TRANSITIONS: Record<string, string[]> = {
     STORY_STATUS.GEN_PARTIAL_FAILED,
     STORY_STATUS.DELETED,
   ],
+  // 已生成完成即冻结：不允许再次整书生图（如需重做只能删除故事重建）
   生图完成待审批: [
     STORY_STATUS.PENDING_PUBLISH,
-    STORY_STATUS.GENERATING,
     STORY_STATUS.DELETED,
   ],
   生图部分失败: [

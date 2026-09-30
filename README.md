@@ -100,6 +100,14 @@ This branch (`feat/multi-model-support`) makes every AI call pluggable per **rol
 `TEXT` (story/characters), `IMAGE` (illustration), and `VISION` (consistency directors).
 By default everything runs on **Gemini**, preserving the original behavior 100%.
 
+For **local development**, a single switch turns off every real model call
+(zero cost, zero API usage):
+
+```bash
+# .env.local — zero-cost mock, no real API calls at all
+MOCK_AI=1
+```
+
 You can switch **each role independently** to a domestic provider, so the whole
 pipeline runs without touching Google's API at all:
 

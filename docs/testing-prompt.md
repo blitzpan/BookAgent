@@ -12,7 +12,11 @@
 
 - 所有大模型 / 生图调用都经由 `backend/src/providers/*` 抽象（`getTextBackend()/getImageBackend()/getVisionBackend()` → `ModelBackend.generateJSON / generateImage`），编排层在 `backend/src/services/geminiService.ts`。
 - **测试必须把这些调用全部走 mock**，否则会真实调用 Gemini / 百炼 / 火山等付费接口，造成大量金钱损失。
-- 实现手段：新增 `backend/src/providers/mock.ts`，并通过环境变量 `TEXT_PROVIDER=mock IMAGE_PROVIDER=mock VISION_PROVIDER=mock` 切换；测试中**绝不**设置真实 `GEMINI_API_KEY / ARK_API_KEY / DASHSCOPE_API_KEY`。
+- 实现手段：新增 `backend/src/providers/mock.ts`，两种等价方式开启 mock，**二者都有效、都保留**：
+  - 分角色：`TEXT_PROVIDER=mock IMAGE_PROVIDER=mock VISION_PROVIDER=mock`（三个都要设，漏一个会回退 gemini 真花钱）；
+  - 总开关：`MOCK_AI=1`（优先级最高，开启后忽略上面三个变量；适合本地开发）。
+  - 当前 `backend/tests/setup.ts` 用**分角色**写法，`playwright.config.ts` 同样用分角色写法；`MOCK_AI` 总开关由 `tests/mock-provider.test.ts` 的专项用例覆盖。
+  - 无论哪种方式，测试中**绝不**设置真实 `GEMINI_API_KEY / ARK_API_KEY / DASHSCOPE_API_KEY`。
 - **防御性兜底**：所有测试启动前，patch `globalThis.fetch`（以及 `undici` 的 fetch）为「任何非 localhost/127.0.0.1 的请求直接 reject」。这样即便误配真实 provider，也会立即报错而非真的花钱。
 - 每条大模型相关用例都断言「mock 的 `generateJSON`/`generateImage` 被调用，且真实 provider 未被构造」。
 - **闭环红线**：自动修复循环（§5）**不得以任何方式弱化本条**——禁止为了「让测试变绿」而把 provider 切回真实、删除 fetch 守门、或注释掉金钱安全断言。若某用例只有真实调用才能过，它就是 §6 的人工项，绝不允许用真金白银去换绿。
@@ -21,8 +25,11 @@
 
 - `backend/src/providers/index.ts`、`backend/src/providers/types.ts`：provider 分发与 `ModelBackend` 接口（`generateJSON` 入参含 `role`/`schema`/`systemInstruction`/`parts`；`generateImage` 入参含 `prompt`/`referenceDataUrls`/`aspectRatio`/`imageSize`，返回 `data:...;base64,...`）。
 - `backend/src/services/geminiService.ts`：抽角色、改写、分页、三个 Director、安全检测、生图——**所有 LLM 调用点**。
-- `backend/src/services/generationService.ts` + `backend/src/services/taskRunner.ts`：`runFullGeneration`（scope=full 整书）与 `runSinglePage`（scope=single_page 单页补画）的执行逻辑与 `recordImage`/`getRunDetail`。
-- `backend/src/routes/stories.ts`、`backend/src/routes/runs.ts`：接口契约（`POST /api/stories`、`POST /api/stories/:id/rewrite`、`POST /api/stories/:id/generate`、`POST /api/pages/:pageId/images`、`POST /api/stories/:id/publish`、`GET /api/runs/:runId` 等）。
+- `backend/src/services/generationService.ts` + `backend/src/services/taskRunner.ts`：**run（版本）+ task（执行）**双概念——`runFullGeneration(taskId)` 整书、`runSinglePage(taskId)` 单页补画；补画只建 task、不建 run。`createRun(storyId, cfg)` / `createTask(storyId, runId, pageId, kind, cfg)` / `getRunDetail` / `recoverTasks()`。
+- `backend/src/routes/stories.ts`、`backend/src/routes/runs.ts`、`backend/src/routes/pageImages.ts`：接口契约
+  - `POST /api/stories`、`POST /api/stories/:id/rewrite`、`GET /api/stories?status=`、`GET /api/stories/:id`、`PATCH /api/stories/:id`（改标题/画风/页数/灵感图/生图配置）、`DELETE /api/stories/:id`、`GET /api/constants/status`
+  - `POST /api/stories/:id/generate` → `{ taskId, runId }`；`POST /api/pages/:pageId/images` → `{ taskId }`；`POST /api/page-images/:imageId/redraw` → `{ taskId }`；`POST /api/stories/:id/publish`
+  - `GET /api/tasks/:taskId`（进度/状态）、`GET /api/runs/:runId`（版本产物）、`GET /api/stories/:id/runs`、`GET /api/pages/:pageId/images`、`PATCH /api/page-images/:imageId`（翻默认图）
 - `backend/src/db/sqlite.ts`：DB 初始化（确认测试可用独立 DB）。
 - `reader/`：阅读页面与 `VITE_API_BASE` / `VITE_USE_MOCK` 环境变量。
 - `frontend/`：创建 / 改写 / 生图 UI（仅供可选 UI 级 Playwright 参考）。
@@ -35,6 +42,7 @@ backend/tests/                 # 后端集成测试（vitest + Fastify inject）
   mock-provider.test.ts        # 金钱安全险：mock 被用、真实 provider 0 构造、fetch 守门生效
   auto-generate.test.ts        # 场景 1：自动生成整书
   manual-generate.test.ts      # 场景 2：手动单页补画
+  generation-config.test.ts    # 生图配置默认值/部分更新/生成闸门
 e2e/                          # Playwright 端到端（移动端 + Pad 端阅读）
   global.setup.ts              # 起 backend(mock)+seed 已发布书；起 reader
   reader.mobile.spec.ts        # 场景 3
@@ -42,22 +50,25 @@ e2e/                          # Playwright 端到端（移动端 + Pad 端阅读
 ```
 
 - 后端集成测试用 **Fastify `app.inject()`**（Fastify 自带，无需端口、无需真实网络）。
-- 把 `backend/src/index.ts` 里「建 app + registerRoutes + initDb」抽成 `backend/src/app.ts` 的 `buildApp()` 导出，`index.ts` 改为调用它后再 `listen`。测试 `import { buildApp }` 后 `await app.ready()` 并 `initDb()`。
+- `backend/src/app.ts` 已导出 `buildApp()`（`index.ts` 调用它后再 `listen`）。测试 `import { buildApp }` 后 `await app.ready()` 并 `initDb()`。
 - DB 隔离：每条测试文件用独立临时 SQLite（sql.js 默认内存库，vitest 默认每文件独立进程即天然隔离；更稳则加 `SQLITE_TEST_FILE=os.tmpdir()/xxx.sqlite` 测试后删除）。
 - Playwright 用 `webServer` 自动拉起「backend(mock)+seed」与「reader」，再按视口跑。
 
 ## 3. Mock Provider 设计（核心：保证零真实调用）
 
-新增 `backend/src/providers/mock.ts`，导出 `createMockBackend(): ModelBackend`，并在 `backend/src/providers/index.ts` 的 `pick()` 中注册 `mock`（三个角色都返回它）。行为（schema 感知，使整条流水线在无真实模型下产出合法数据）：
+`backend/src/providers/mock.ts` 导出 `createMockBackend(): ModelBackend`，已在 `backend/src/providers/index.ts` 的 `pick()` 注册；`MOCK_AI=1` 时三个角色全部走它。行为（**内容感知**：读请求再作答，尽量像真模型，但全程零网络）：
 
-- `generateJSON({ schema, systemInstruction, role })`：
-  - 若 `schema.properties.characters` 存在 → 返回 `{ characters: [{ id:"char_1", name:"主角", visualDescription:"一只圆滚滚的小猫，橘色，蓝眼睛" }] }`。
-  - 否则若 `schema.properties.pages` 存在 → 从 `systemInstruction` 解析「EXACTLY N pages」的 N（默认 6），返回 `{ pages: Array.from({length:N}, (_,i)=>({ pageNumber:i+1, text:`第 ${i+1} 页示例文字`, imagePrompt:`示例画面描述 ${i+1}` })) }`。
-  - 否则若含布尔评分字段（`isAcceptable`/`isConsistent`/`isSafe`）→ 返回 `{ isAcceptable:true, isConsistent:true, isSafe:true, score:0.95, issues:[], problemPages:[] }`。
-  - 兜底 → `{}`。
-- `generateImage()`：返回**合法最小 PNG data URL**（1×1 透明 PNG 的 base64）。
-- `maxRefs:14`、`supportsVision:true`。
-- 不触碰任何网络。
+- `generateJSON({ schema, systemInstruction, parts, role })`：
+  - `characters` → 从**用户原文里真正出现的名字**抽取（内置 15 类中文角色词表 + 英文大写词识别），返回英文 snake_case 的 `id` + 匹配到的 `name` + 外观描述，最多 5 个。
+  - `pages` → 从 `systemInstruction` 的「EXACTLY N」取页数，**把原文真实切分成 N 页**（句 → 逗句 → 二分最长段 → 过渡句补齐，保证相邻页不重复）；`imagePrompt` 由该页正文 + 风格拼出。
+  - `finalStory` → 原文足够长时按 `good_polish` 原样返回（仅做空白归一化）；不足目标篇幅时走 `rewrite` 并追加过渡句扩写。
+  - 安全校验 → `isSafe:true`；`sanitize` 模式额外返回 `sanitizedText`。
+  - 评分类（`isAcceptable`/`isConsistent`/`score`）→ **随「图片内容 + 文本」确定性抖动**：首轮 0.72–0.99（偶尔低于 0.75 阈值），带 `FIX (based on director)` 的修复轮 0.90–0.99。
+  - 序列校验 → 首次固定 `score 0.78` + `problemPages`（从请求里解析真实页码）以**触发全局修复分支**，第二次 0.92 通过。
+  - 未识别的 schema → 按类型自动补全，保证不缺字段。
+- `generateImage()`：由 `backend/src/providers/mockImage.ts` 用 zlib **本地画一张真 PNG**（天空渐变 + 太阳 + 山丘 + 地面 + 角色剪影；同一批锚图 → 同一配色，跨页角色一致），按 `aspectRatio`（4:3/1:1/…）与 `imageSize` 决定尺寸——**不再是 1×1 占位图**。
+- `maxRefs:14`、`supportsVision:true`，不触碰任何网络。
+- 已知边界：不模拟失败（生图恒成功、安全恒通过），因此「生图失败 / 安全拦截」分支仍测不到。
 
 > 不要用 `vi.mock('@google/genai')` 作主方案（只对默认 gemini 生效，换 provider 即失效）。**mock provider 是主方案**。
 
@@ -66,17 +77,17 @@ e2e/                          # Playwright 端到端（移动端 + Pad 端阅读
 **场景 1 自动生成（auto-generate.test.ts）**——`app.inject` 跑整书流水线：
 1. `POST /api/stories` 建故事（`target_page_count=4`）。断言 201 + 返回 `id`，初始 `status`「新建」。
 2. `POST /api/stories/:id/rewrite`（同步）。断言含 `refined_text` 与分页 `pages`（长度 4），状态「改写完成待生图」。
-3. `POST /api/stories/:id/generate`（full）→ `runId`，状态「生图中」。
-4. 轮询 `GET /api/runs/:runId` 直到 `completed`/`partial_failed`。
+3. `POST /api/stories/:id/generate`（full）→ `{ taskId, runId }`，状态「生图中」。
+4. 轮询 `GET /api/tasks/:taskId` 直到 `completed`/`failed`；完成后 `GET /api/runs/:runId` 的状态应为 `completed`/`partial_failed`。
 5. 断言每页 `default_image` 非空、`image_path` 合法（`assets/...`）；`sequence_checks`≥1 条；`characters` 锚图 `sheet_image_path` 非空。
 6. `POST /api/stories/:id/publish` → 状态「审批通过的作品」。
 7. `GET /api/stories?status=审批通过的作品` 能查到该书。
 8. 金钱安全断言：spy 确认 mock `generateJSON`/`generateImage` 被调用；真实 provider 构造 0 次。
 
-**场景 2 手动生成（manual-generate.test.ts）**——单页补画（scope=single_page）：
+**场景 2 手动生成（manual-generate.test.ts）**——单页补画（task `kind=single_page`）：
 1. 复用场景 1 步骤 1–4（抽成 `seedBook()` 夹具）先产出整书。
 2. 取某 `pageId`（`GET /api/stories/:id`）。
-3. `POST /api/pages/:pageId/images` → `runId`（scope=single_page），轮询完成。
+3. `POST /api/pages/:pageId/images` → **只有 `{ taskId }`（不建新 run，产物挂 `story.current_run_id`）**，轮询 `GET /api/tasks/:taskId` 完成；故事尚无整书版本时该接口返回 409。
 4. 断言该页 `candidates` +1，**不翻默认**（除非另行调翻默认接口）。
 5. 金钱安全断言同上。
 6. 可选 UI 级 Playwright（frontend/）：建书→改写→生成整书（场景1 UI 版）；对某页补画（场景2 UI 版）。
@@ -103,7 +114,7 @@ e2e/                          # Playwright 端到端（移动端 + Pad 端阅读
 
 ### 5.1 执行入口
 ```
-# 后端集成测试（mock 全开，真实 key 置空）
+# 后端集成测试（分角色 mock 全开，真实 key 置空；也可改用总开关 MOCK_AI=1）
 TEXT_PROVIDER=mock IMAGE_PROVIDER=mock VISION_PROVIDER=mock \
 GEMINI_API_KEY= ARK_API_KEY= DASHSCOPE_API_KEY= \
 npx vitest run            # backend/tests
@@ -161,7 +172,7 @@ npx playwright test        # e2e
 
 ## 7. 运行与依赖
 
-- `backend/package.json` 增加：`devDependencies` 加 `vitest`、`@playwright/test`；`scripts` 加 `"test":"vitest run"`、`"test:e2e":"playwright test"`（e2e 也可放仓库根 `e2e/`）。
+- 现状：`backend/package.json` 的 `devDependencies` 含 `vitest`，`scripts` 含 `"test":"vitest run"`、`"test:watch":"vitest"`；`@playwright/test` 与 `test:e2e` 在**仓库根** `package.json`（e2e 用例放在根 `e2e/`）。
 - 测试脚本启动**先写 mock env**（见 §5.1），`GEMINI_API_KEY=` 等显式置空。
 - Playwright 首次 `npx playwright install`（浏览器二进制）。
 - 不提交真实 key、不提交 `.env.local` / key 文件；不改 `frontend/` 业务逻辑、不改 DB schema。

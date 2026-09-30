@@ -7,6 +7,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+// 分角色指定 mock：三个角色都要设，漏一个就会回退 gemini（会真的花钱）。
+// 另一种等价写法是总开关 MOCK_AI=1（见 src/providers/index.ts），二者都有效。
 process.env.TEXT_PROVIDER = "mock";
 process.env.IMAGE_PROVIDER = "mock";
 process.env.VISION_PROVIDER = "mock";

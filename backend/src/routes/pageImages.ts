@@ -3,9 +3,12 @@ import { db } from "../db/sqlite";
 import {
   getPageImages,
   setDefaultImageForPage,
-  createRun,
+  createTask,
+  getActiveTask,
 } from "../services/generationService";
-import { runRun } from "../services/taskRunner";
+import { getStoryRaw } from "../services/storyService";
+import { mergeGenerationConfig } from "../constants/generationConfig";
+import { runTask } from "../services/taskRunner";
 
 export function registerPageImageRoutes(app: FastifyInstance): void {
   // 某页全部候选图
@@ -51,9 +54,21 @@ export function registerPageImageRoutes(app: FastifyInstance): void {
       .prepare(`SELECT * FROM page_images WHERE id = ?`)
       .get(imageId) as any;
     if (!row) return reply.code(404).send({ error: "图片不存在" });
-    const body = (req.body || {}) as any;
-    const runId = createRun(row.story_id, "single_page", row.page_id, body);
-    void runRun(runId);
-    return reply.code(201).send({ runId });
+    // 与 POST /api/pages/:pageId/images 等价：给当前版本追加候选，不新建 run
+    const story = getStoryRaw(row.story_id);
+    if (!story) return reply.code(404).send({ error: "故事不存在" });
+    const runId = story.current_run_id;
+    if (!runId) {
+      return reply
+        .code(409)
+        .send({ error: "该故事还没有整书生成版本，请先整书生图" });
+    }
+    if (getActiveTask(runId, "single_page", row.page_id)) {
+      return reply.code(409).send({ error: "该页已有进行中的补画任务" });
+    }
+    const cfg = mergeGenerationConfig(story.generation_config);
+    const taskId = createTask(story.id, runId, row.page_id, "single_page", cfg);
+    void runTask(taskId);
+    return reply.code(201).send({ taskId });
   });
 }

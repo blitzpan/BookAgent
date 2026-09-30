@@ -10,12 +10,13 @@
 
 BookAgent 是一个**面向儿童绘本的安全感知多智能体视觉故事书生成框架**，主打"端到端 + 闭环"：不是把文本生成和图像生成分开跑，而是联合规划、生成、校验、修复。
 
-它是 ACL 2026 Findings 论文的配套开源 demo，形态为 **React 19 + Vite 6 纯前端单页应用**，无独立后端。所有 AI 调用原本硬编码走 Google Gemini，经我们改造后已变为**多模型可插拔**：每个角色（文本 / 图像 / 视觉）可独立选择 provider，从而能在国内网络下完全不依赖 Gemini 运行。
+它是 ACL 2026 Findings 论文的配套开源 demo，原形态为 React 19 + Vite 6 纯前端单页应用。经我们重构后现为 **monorepo**：`backend/`（Fastify + sql.js）承载全部 AI 调用与持久化，`frontend/` 为管理壳，`reader/` 为只读阅读端。所有 AI 调用原本硬编码走 Google Gemini，改造后已变为**多模型可插拔**：每个角色（文本 / 图像 / 视觉）可独立选择 provider，从而能在国内网络下完全不依赖 Gemini 运行；本地开发还可一个开关 `MOCK_AI=1` 全部走 mock（零调用、零费用）。
 
 ### 技术栈（改造后）
-- 前端：React 19 + Vite 6
-- 模型：按角色可插拔，provider 包括 `gemini`（默认）/ `qwen`（通义千问，国内）/ `seedream`（Seedream，国内）/ `ark`（火山方舟，国内，单一 Key 覆盖三角色）
-- 关键文件：`services/geminiService.ts`（全部 AI 逻辑编排，导出签名不变）、`App.tsx`（UI + 主流程）、`services/providers/`（各模型后端实现）
+- 后端：`backend/` Fastify 5 + sql.js（WASM SQLite，无原生编译）+ `providers/` 多模型抽象
+- 前端：`frontend/` 管理壳（React + Vite，5174）、`reader/` 阅读端（React + Vite，5173）
+- 模型：按角色可插拔，provider 包括 `gemini`（默认）/ `qwen` 或 `bailian`（阿里百炼，国内）/ `seedream`（火山 Seedream，仅图像）/ `ark`（火山方舟，单一 Key 覆盖三角色）/ `mock`（本地假数据）
+- 关键文件：`backend/src/services/geminiService.ts`（全部 AI 逻辑编排）、`backend/src/providers/`（各模型后端实现）、`backend/src/services/generationService.ts`（生图编排：版本 run + 执行 task）、`backend/src/constants/generationConfig.ts`（生图参数单一来源）、`frontend/src/App.tsx`（管理壳 UI）
 
 ### 核心流水线（生成闭环）
 1. 文本安全校验（check → sanitize）
@@ -40,24 +41,31 @@ BookAgent 是一个**面向儿童绘本的安全感知多智能体视觉故事�
 ## 二、开发者指南：配置模型与运行系统
 
 ### 2.1 环境要求
-- Node.js（建议 18+）
-- 一个可用的模型 API Key（见 2.3）
+- Node.js **≥ 20.12**（后端用内置 `process.loadEnvFile` 读取配置；实测 20.18.0）
+- 一个可用的模型 API Key（见 2.3）；**或**不配任何 key、直接开 `MOCK_AI=1` 零成本跑通全链路
 
 ### 2.2 安装与启动
 ```bash
 cd D:\workspace\git\huiBen\BookAgent
-npm install
-# 编辑 .env.local，至少填入一个 provider 的 key（见 2.3）
-npm run dev      # 启动后访问 http://localhost:3000/
+npm run install:all        # 分别安装 backend / frontend / reader 依赖
+# 配置：backend/.env.local 或仓库根 .env.local（后端启动时自动加载，见 2.3）
+
+npm run dev:backend        # 后端 API        http://localhost:3000
+npm run dev:frontend       # 管理壳          http://localhost:5174
+npm run dev:reader         # 阅读端          http://localhost:5173
 ```
-没有 key 也能打开前端，但点击生成会因鉴权失败而报错。构建 / 预览：
-```bash
-npm run build
-npm run preview
-```
+（在各子包目录下 `npm run dev` 亦可。）构建 / 预览：`cd frontend && npm run build && npm run preview`（reader 同理）。
 
 ### 2.3 模型配置（核心）
-所有 AI 调用按**角色**分发到 provider，通过 `.env.local` 的三个变量选择：
+
+**省钱总开关 `MOCK_AI`**：设为 `1` 时整个后端走本地假数据，零真实大模型调用、零费用，
+下面三个 `*_PROVIDER` 与所有 API Key 全部被忽略。本地开发推荐只配这一行。
+
+```bash
+MOCK_AI=1
+```
+
+`MOCK_AI=0`（默认）时，所有 AI 调用按**角色**分发到 provider，通过 `.env.local` 的三个变量选择：
 - `TEXT_PROVIDER`：文本类（抽角色 / 改写 / 分页 / 文本安全）
 - `IMAGE_PROVIDER`：生图
 - `VISION_PROVIDER`：需要"看图"的 VLM 校验（三个 Director + 图像安全）
@@ -71,6 +79,7 @@ npm run preview
 | `qwen` / `bailian` | TEXT / VISION / **IMAGE** | 是（阿里百炼 DashScope：通义千问 + 通义万相） | `BAILIAN_API_KEY`（或 `QWEN_API_KEY`，同网关通用） |
 | `seedream` | IMAGE only | 是（火山方舟） | `SEEDREAM_API_KEY`（或共用 `ARK_API_KEY`） |
 | `ark` | TEXT / IMAGE / VISION | 是（火山方舟） | `ARK_API_KEY`（单一 Key 覆盖三角色） |
+| `mock` | TEXT / IMAGE / VISION | — | 无需 Key（本地假数据：JSON 与请求内容相关、图片为本地画出的真 PNG；由 `MOCK_AI=1` 一键开启，详见 `backend/src/providers/mock.ts`） |
 
 > `qwen` 与 `bailian` 是同一后端（阿里百炼平台）的两个名字：百炼与 DashScope 共用同一网关与 API Key，文本/视觉用通义千问（Qwen），图像用通义万相（Wanxiang / 万相 2.7）。现在它已支持**全角色**，可作为零 Gemini 的单一国内方案。
 
@@ -123,42 +132,53 @@ BAILIAN_API_KEY=你的百炼/DashScope Key
 - Seedream / Ark：最多 10 张/页；百炼最多 9 张/页（均由 `backend.maxRefs` 控制，`geminiService.generateImage` 自动截断）；**全部为角色锚图，不再含上一页整图**
 - 超出会自动截断，不会报错。
 
-完整 env 变量速查见 `vite.config.ts` 的 `define` 段。
+完整 env 变量速查见 `backend/.env.example`；由 `backend/src/env.ts` 在启动时按 `backend/.env.local` > 仓库根 `.env.local` > `backend/.env` > 仓库根 `.env` 自动加载（前端 `vite.config.ts` 已无 `define` 注入）。
 
-### 2.4 CORS / 开发代理
-纯前端浏览器直调国内 API 会被 CORS 拦截，开发环境统一走 Vite 代理（`vite.config.ts`）：
+### 2.4 CORS / 端点
+所有模型调用都在 **backend（Node）进程内**发出，不经浏览器，因此**不存在浏览器 CORS 问题**，也不需要 Vite 代理国内 API（`frontend/vite.config.ts` 只代理 `/api` 与 `/assets`）。
 
-| 代理路径 | 转发目标 | 用途 |
-| --- | --- | --- |
-| `/bailian-api` | `https://dashscope.aliyuncs.com`（前缀被 rewrite 去掉，保留后续完整路径） | 百炼文本/视觉（`/compatible-mode/v1/chat/completions`）+ 生图（`/api/v1/services/aigc/multimodal-generation/generation`） |
-| `/ark-api` | `https://ark.cn-beijing.volcesengine.com`（保留后续路径） | Ark 文本/视觉 + 图像 |
-| `/seedream-api` | `https://ark.cn-beijing.volcesengine.com/api/v3/images/generations` | Seedream 生图 |
+⚠️ 因此国内 provider **必须把 `*_BASE_URL` 配成完整 https 地址**：源码默认值 `/bailian-api`、`/ark-api`、`/seedream-api` 是相对路径，Node 端直连会因无法解析 URL 而失败。
 
-前端以相对路径调用，由代理转发，**绕开浏览器 CORS**。生产 / 自部署需把对应 `BASE_URL` 设成完整地址（CORS 仍需服务端放行）。
+| 变量 | 示例 |
+| --- | --- |
+| `BAILIAN_BASE_URL` | `https://dashscope.aliyuncs.com`（或业务空间专属域名 `https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com`） |
+| `ARK_BASE_URL` | `https://ark.cn-beijing.volcesengine.com` |
+| `SEEDREAM_BASE_URL` | `https://ark.cn-beijing.volcesengine.com` |
+
+reader / 管理壳访问后端 API 的跨域由 `backend/src/app.ts` 的 `onRequest` 钩子放行（`CORS_ORIGIN`，默认 `*`），无需额外依赖。
 
 ### 2.5 架构概览
 ```
-App.tsx
-  └─ services/geminiService.ts   （编排层：组装 prompt/parts/schema，调用后端，解析结果）
-       └─ services/providers/
-            ├─ types.ts        ModelBackend 接口定义
-            ├─ util.ts         文件/dataURL 转换、图像 prompt 组装、toDataUrl
-            ├─ openaiLike.ts   通用 OpenAI 兼容 chat 工厂（bailian / ark 的 TEXT+VISION 共用）
-            ├─ gemini.ts       GeminiBackend（默认，完整保留原 @google/genai 行为）
-            ├─ bailian.ts      BailianBackend（文本 + 视觉 + 图像，阿里百炼 DashScope：通义千问 + 通义万相）
-            ├─ qwen.ts         （向后兼容）重新导出 BailianBackend，避免历史引用断裂
-            ├─ ark.ts          ArkBackend（文本 + 视觉 + 图像，火山方舟）
-            ├─ seedream.ts     SeedreamBackend（图像，多参考图；文本/视觉不支持）
-            └─ index.ts        后端注册 + 按角色分发（含不支持角色时的回退）
+backend/src/
+  ├─ app.ts / index.ts           Fastify 应用与启动（启动时自动加载 .env*）
+  ├─ services/geminiService.ts   编排层：组装 prompt/parts/schema，调用后端，解析结果
+  ├─ services/generationService.ts  生图编排：版本(run) + 执行(task)、逐页闭环、序列修复
+  ├─ services/storyService.ts    建故事 / 改写 / 配置 / 状态机
+  ├─ services/characterService.ts 角色抽取与锚图
+  ├─ routes/                     stories / runs / pageImages
+  ├─ constants/generationConfig.ts 生图参数默认值与校验（单一来源）
+  └─ providers/
+       ├─ types.ts        ModelBackend 接口定义
+       ├─ util.ts         文件/dataURL 转换、图像 prompt 组装、toDataUrl
+       ├─ openaiLike.ts   通用 OpenAI 兼容 chat 工厂（bailian / ark 的 TEXT+VISION 共用）
+       ├─ gemini.ts       GeminiBackend（默认）
+       ├─ bailian.ts      BailianBackend（文本 + 视觉 + 图像，阿里百炼）
+       ├─ qwen.ts         （向后兼容）重新导出 BailianBackend
+       ├─ ark.ts          ArkBackend（文本 + 视觉 + 图像，火山方舟）
+       ├─ seedream.ts     SeedreamBackend（仅图像）
+       ├─ mock.ts         MockBackend：内容感知的本地假数据
+       ├─ mockImage.ts    mock 生图：zlib 本地画真 PNG
+       └─ index.ts        注册 + 按角色分发（含 MOCK_AI 总开关与不支持角色时的回退）
+frontend/src/  管理壳（建故事 / 改写 / 生图 / 发布）
+reader/src/    只读阅读端（书架 + 翻页 + 双语）
 ```
 - `ModelBackend` 统一接口：`generateJSON({systemInstruction,parts,schema,role})` 与 `generateImage({prompt,referenceDataUrls,aspectRatio,imageSize})`。
-- `geminiService.ts` 的所有导出签名**保持不变**，因此 `App.tsx` 无需改动。
-- **默认全 `gemini`，行为与改造前 100% 一致**。
+- **默认全 `gemini`**；`MOCK_AI=1` 时三个角色全部走 `mock`。
 
 ### 2.6 扩展新的 Provider
-1. 在 `services/providers/` 下实现 `ModelBackend`（文本/视觉可选，不支持的方法抛错即可）；OpenAI 兼容的对话类可直接复用 `openaiLike.createChatJSONMethod`。
-2. 在 `services/providers/index.ts` 注册，并在 `pick()` 中支持其名字。
-3. 在 `vite.config.ts` 的 `define` 增加对应 key/端点变量，并在 `.env.local` 配置；如需绕过 CORS，再在 `server.proxy` 加一条代理。
+1. 在 `backend/src/providers/` 下实现 `ModelBackend`（文本/视觉可选，不支持的方法抛错即可）；OpenAI 兼容的对话类可直接复用 `openaiLike`。
+2. 在 `backend/src/providers/index.ts` 的 `pick()` 中注册其名字。
+3. Key / 端点变量写进 `backend/.env.local`（可选）并补进 `backend/.env.example`——**无需 `define`、无需 Vite 代理**。
 
 ### 2.7 常见问题
 - **401/403**：API Key 缺失或权限不足；确认 `.env.local` 中对应 provider 的 Key 已填且生效（改完重启 `npm run dev`）。
@@ -174,8 +194,8 @@ App.tsx
 本节面向**不写代码的使用者**：你只需要一个已经部署/启动好的系统地址，和一个配置好的模型 Key（由开发/运维在 2.3 配好）。
 
 ### 3.1 开始前
-- 打开系统页面（本地 `http://localhost:3000/`，或部署后的地址）。
-- 确保开发侧已配置好至少一种模型（默认 Gemini，或国内方案 A/B）。
+- 打开**管理壳**（本地 `http://localhost:5174/`，或部署后的地址）；生成并发布的绘本在**阅读端** `http://localhost:5173/` 查看。（`http://localhost:3000` 是后端 API，不是页面。）
+- 确保开发侧已配置好至少一种模型（默认 Gemini，或国内方案 A/B），或已开启 `MOCK_AI=1`。
 
 ### 3.2 一步步生成你的绘本
 1. **输入故事**：在 *Your Story* 文本框粘贴或写下你的故事草稿。系统会先做儿童内容安全校验，再自动改写以适配目标页数。
@@ -205,14 +225,15 @@ BookAgent 不是"生成一次就完事"，而是带**评分—重生成**闭环�
 
 > 记忆口诀：**Frame 管"每一页对不对"，Sequence 管"整本书连不连"**；阈值调高 + 重试调高 = 质量更好但更慢更贵。普通用户保持默认即可。
 
-### 3.5 生成后你会看到什么 / 如何导出
-- **Reference Sheets**：自动生成的角色锚图（一致性锚点），可点 *Download refs* 下载。
-- **Director #1 / #2 反馈**：闭环打分与问题说明文字，帮助了解质量。
-- **画册**：逐页插画卡片，可横向滑动浏览。
-- **导出**：*Download All Pages* 下载全部页 PNG；*Create Another Story* 重新开始。
-- 若某页显示 *Image unavailable*，通常是该页模型调用失败/被安全拦截，可看下方错误文案或重试。
+### 3.5 生成后你会看到什么 / 如何使用
+- **角色锚图（anchors）**：管理壳里展示本次抽取的角色及其锚图（一致性锚点）。
+- **每页候选图**：每页可有多张候选（首跑 `initial`、重画 `retry`、补画追加），带 `identity / frame / combined` 三项评分；可把任意候选**翻为该页默认图**。
+- **序列一致性**：整书评分与问题页提示（`sequence_checks`）。
+- **发布**：管理壳点「发布」后，该书才会在阅读端书架出现（`status = 审批通过的作品`）。
+- **阅读端**：书架 → 翻页阅读，支持双语切换与字号调节；手机单页滑动、Pad 跨页。
+- 若某页显示无图，通常是该页生图失败/被安全拦截，可在管理壳对该页补画。
 
 ---
 
 ## 四、与我们绘本项目的定位（简述）
-BookAgent 把你规划的 6 大功能里的**"功能1（AI 绘本内容生成 + 角色一致性）"**做到了行业顶配，但**其余 5 项（中英双语 TTS、交互式阅读器、图片热区、双语资源状态、资产结构化输出）它都没有**。正确定位是：把它作为**"生成端一致性算法"的高分参考**，而非整体方案。详见 [BookAgent代码分析报告.md](./BookAgent代码分析报告.md)。
+BookAgent 把你规划的 6 大功能里的**"功能1（AI 绘本内容生成 + 角色一致性）"**做到了行业顶配；经我们重构后，已补齐**交互式阅读器（`reader/`）**与**资产结构化输出（库表 + `assets/` 落盘 + `/assets/*` 访问）**。仍缺失：**中英双语 TTS、图片热区**（代码中为预留位）。正确定位是：把它作为**"生成端一致性算法"的高分参考**，并复用其阅读端形态。详见 [BookAgent代码分析报告.md](./BookAgent代码分析报告.md)。

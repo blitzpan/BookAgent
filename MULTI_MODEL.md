@@ -84,8 +84,14 @@ App.tsx
 
 ## 配置（.env.local）
 
+**本地开发零成本最简配置**：只写一行 `MOCK_AI=1`，三个角色全部走本地 mock，零真实 API 调用、零费用；
+此时下面的 provider 与所有 API Key 都被忽略，一个都不用配。要接真实模型时改成 `MOCK_AI=0`。
+
 ```bash
-# 角色 -> provider（默认全 gemini）
+# 省钱总开关（本地开发推荐）
+MOCK_AI=1
+
+# 角色 -> provider（MOCK_AI=0 时才生效，默认全 gemini）
 TEXT_PROVIDER=gemini
 IMAGE_PROVIDER=gemini
 VISION_PROVIDER=gemini
@@ -97,7 +103,7 @@ VISION_PROVIDER=gemini
 # ARK_API_KEY=你的火山方舟Key
 ```
 
-可选 provider：`gemini` / `qwen` / `bailian` / `seedream` / `ark`。
+可选 provider：`gemini` / `qwen` / `bailian` / `seedream` / `ark` / `mock`。
 - `ark` 支持全部三个角色。
 - `bailian` / `qwen` 支持全部三个角色（阿里百炼：通义千问文本 + Qwen-VL 视觉 + 通义万相生图）。
 - `seedream` 只支持 `IMAGE`，若被误配到 `TEXT`/`VISION` 会自动回退 `gemini` 并告警。

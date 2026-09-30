@@ -14,6 +14,10 @@ import {
   safetyCheckText,
 } from "./geminiService";
 import { saveInspiration } from "../storage/imageStore";
+import {
+  DEFAULT_GENERATION_CONFIG,
+  applyConfigPatch,
+} from "../constants/generationConfig";
 
 const now = () => new Date().toISOString();
 
@@ -40,6 +44,11 @@ export function createStory(input: CreateStoryInput): CreateStoryResult {
         now()
       );
     const id = Number(info.lastInsertRowid);
+
+    // 生图参数落默认配置（后续可在详情页改）
+    db.prepare(
+      `UPDATE stories SET generation_config = ? WHERE id = ?`
+    ).run(JSON.stringify(DEFAULT_GENERATION_CONFIG), id);
 
     let inspiration_image_path: string | undefined;
     if (input.inspiration_image_path) {
@@ -128,8 +137,9 @@ export async function rewriteStory(storyId: number): Promise<RewriteResult> {
       style
     );
 
-    // 落库：先清旧 pages，再写新的
+    // 落库：先清旧图（否则旧 page_images 悬挂在已删除的 page 上），再清 pages，最后写新的
     const tx = db.transaction(() => {
+      db.prepare(`DELETE FROM page_images WHERE story_id = ?`).run(storyId);
       db.prepare(`DELETE FROM pages WHERE story_id = ?`).run(storyId);
       for (const p of parsedPages) {
         db.prepare(
@@ -172,6 +182,51 @@ function pathFromStory(story: Story): string {
   return path.join(DATA_DIR, story.inspiration_image_path as string);
 }
 
+export interface UpdateStoryInput {
+  user_title?: string | null;
+  style?: string | null;
+  target_page_count?: number | null;
+  inspiration_image?: string; // 可选 dataURL，传入则覆盖灵感图
+  generation_config?: unknown; // 生图参数补丁（部分更新，见 constants/generationConfig）
+}
+
+/** 更新故事级配置（标题 / 画风 / 目标页数 / 灵感图）；只影响后续改写与生图。 */
+export function updateStory(id: number, input: UpdateStoryInput): Story {
+  const story = getStoryRaw(id);
+  if (!story) throw new Error(`故事不存在: ${id}`);
+
+  const sets: string[] = [];
+  const args: any[] = [];
+  if (input.user_title !== undefined) {
+    sets.push("user_title = ?");
+    args.push(input.user_title);
+  }
+  if (input.style !== undefined) {
+    sets.push("style = ?");
+    args.push(input.style);
+  }
+  if (input.target_page_count !== undefined) {
+    sets.push("target_page_count = ?");
+    args.push(input.target_page_count);
+  }
+  if (input.inspiration_image) {
+    sets.push("inspiration_image_path = ?");
+    args.push(saveInspiration(id, input.inspiration_image));
+  }
+  if (input.generation_config !== undefined) {
+    sets.push("generation_config = ?");
+    args.push(
+      JSON.stringify(applyConfigPatch(story.generation_config, input.generation_config))
+    );
+  }
+  if (sets.length === 0) return story;
+
+  sets.push("updated_at = ?");
+  args.push(now(), id);
+  db.prepare(`UPDATE stories SET ${sets.join(", ")} WHERE id = ?`).run(...args);
+  return getStoryRaw(id) as Story;
+}
+
 export function getStoryRaw(id: number): Story | undefined {
   return db.prepare(`SELECT * FROM stories WHERE id = ?`).get(id) as
     | Story
@@ -211,6 +266,13 @@ export function getPagesByStory(id: number): Page[] {
   return db
     .prepare(`SELECT * FROM pages WHERE story_id = ? ORDER BY page_number ASC`)
     .all(id) as Page[];
+}
+
+/** 设置当前生效版本（整书 run）。 */
+export function setCurrentRun(id: number, runId: number | null): void {
+  db.prepare(
+    `UPDATE stories SET current_run_id = ?, updated_at = ? WHERE id = ?`
+  ).run(runId, now(), id);
 }
 
 export function setStatus(id: number, to: string): void {
