@@ -2,7 +2,7 @@
 
 你是一名资深前端工程师。请在当前仓库（BookAgent，绘本生成系统）中**新建一个独立的只读展示前端** `reader/`，用于向读者（儿童 / 家长）展示已发布的成品绘本。本任务只做「展示」，不做任何创作 / 管理功能。
 
-> ✅ 状态：`reader/` 已按本文档实现完成，后端两处配套改动（CORS、`?status=` 已发布过滤）也已落地。
+> ✅ 状态：`reader/` 已按本文档实现完成，后端两处配套改动（CORS、`?status=` 已发布过滤）也已落地；**音频播放（分段播放列表 + 自动翻页 + 中/英/双语切音轨）已实现**，仅「图片热区」仍为渲染壳（无后端落库数据，待建）。
 > 后端**可在本地直接运行**：`cd backend && npm run dev`（配合 `MOCK_AI=1` 可零成本跑通全链路），因此可以用 `curl` / 浏览器实测接口。
 > 字段结构仍**以源码为准**（设计文档 `design/接口设计.md` 的响应示例已过时，不可照抄）。
 > 优先阅读这些文件确认契约：`backend/src/routes/stories.ts`、`backend/src/routes/runs.ts`、`backend/src/routes/pageImages.ts`、`backend/src/services/storyService.ts`（listStories / getStoryDetail）、`backend/src/services/generationService.ts`（getRunDetail / listRunsForStory）、`backend/src/types.ts`、`backend/src/constants/status.ts`。
@@ -156,8 +156,8 @@ interface ReaderPage {
 }
 interface Hotspot { x:number; y:number; w:number; h:number; type:string; payload:string; }
 ```
-- 音频：每页一个 ▶ 播放键，仅在 `audioUrl` 存在时可用，否则置灰。
-- 热区：图片上可点区域，仅在 `hotspots` 存在时渲染并响应点击（当前仅高亮 / 占位即可）。
+- 音频：**已真实实现（非预留位）**。每页分段音频来自 `book-audio` 接口的 `segments[].audioUrls`（zh/en），阅读器底部含播放列表控制条（顺序播放分段、自动翻页）；`page.audioUrl` 整页兜底键保留但当前由分段音频驱动。
+- 热区：图片上可点区域，`hotspots` 存在时渲染（`PageView.tsx` 已写好百分比定位覆盖层）；**但当前后端/管理壳尚无热区编辑与落库，`hotspots` 恒为 undefined、实际不渲染——属于待建功能（仅渲染壳就绪）**。
 - `imageUrl` 为 null 时：显示占位图，禁止白屏。
 
 ## 6. 实现步骤（建议顺序）
@@ -181,7 +181,7 @@ interface Hotspot { x:number; y:number; w:number; h:number; type:string; payload
 ## 8. 禁止 / 范围外
 
 - 禁止在 `reader/` 实现任何创作 / 管理功能（生成、审批、补画、改图等）。
-- 禁止改动 `frontend/` 管理壳业务逻辑；禁止改动数据库 schema（热区 / 音频未来由用户单独扩展，reader 只预留字段）。
+- 禁止改动 `frontend/` 管理壳业务逻辑（热区编辑等新增功能需另开设计文档，在 `frontend/` 内新增模块而非改动既有业务逻辑）；音频相关表（`page_segments`/`audio_sets`/`page_audio`）已落地，禁止改动其 schema；**热区表尚未建立，新增热区功能需单独建表并经评审**。
 - 不实现角色锚图画廊、不实现「创作对话」页。
 - 不要主动 `git commit / push`（除非最终报告中明确说明并获确认）。
 
