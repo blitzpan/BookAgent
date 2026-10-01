@@ -158,6 +158,23 @@ export async function initDb(): Promise<void> {
     /* 列已存在或无需添加，忽略 */
   }
 
+  // 开发阶段迁移：旧库 page_audio 可能是「无 audio_set_id」的旧结构。
+  // 旧结构的行无法归属于任何配音方案，继续保留会让 book-audio / audioExists 判定错乱，
+  // 检测到缺列则丢弃该表并按当前 schema 重建（与 page_hotspots 的处理手法一致）。
+  try {
+    const cols = db
+      .prepare(`PRAGMA table_info(page_audio)`)
+      .all() as Array<{ name?: string }>;
+    if (cols.length > 0 && !cols.some((c) => c?.name === "audio_set_id")) {
+      db.exec(`DROP TABLE page_audio`);
+      db.exec(
+        fs.readFileSync(path.join(BACKEND_DIR, "src/db/schema.sql"), "utf-8")
+      );
+    }
+  } catch {
+    /* 表尚未建好，忽略 */
+  }
+
   // 开发阶段迁移：page_hotspots 旧结构含 w/h 估算尺寸列。尺寸已改为由 label 渲染推导
   // （后端无法测量文字，存库尺寸必是垃圾值），检测到旧列则重建该表。
   // 热区可由「AI 生成热区」一键重建，开发期无需保留旧行。
@@ -184,6 +201,13 @@ export async function initDb(): Promise<void> {
     /* audio_sets 尚未建好，忽略 */
   }
 
+  // 开发阶段迁移：generation_tasks 旧结构可能缺 cancel_requested 列（本期新增）。
+  try {
+    db.exec(`ALTER TABLE generation_tasks ADD COLUMN cancel_requested INTEGER DEFAULT 0`);
+  } catch {
+    /* 列已存在或无需添加，忽略 */
+  }
+
   persist();
   initialized = true;
 }
@@ -192,4 +216,32 @@ export function persist(): void {
   if (inTransaction) return; // 事务内抑制落盘，交给 transaction() 在 COMMIT 后统一落盘
   if (!db.engine) return;
   fs.writeFileSync(DB_PATH, Buffer.from(db.engine.export()));
+}
+
+/** 任务是否被请求取消（页级：置位后当前页跑完即停，已完成的页保留）。 */
+export function isCancelRequested(taskId: number): boolean {
+  const row = db
+    .prepare(`SELECT cancel_requested AS c FROM generation_tasks WHERE id = ?`)
+    .get(taskId) as { c: number } | undefined;
+  return !!row?.c;
+}
+
+/** 请求取消某个任务（仅置标记，不强制 kill 进行中的单次模型调用）。 */
+export function requestCancel(taskId: number): boolean {
+  const info = db
+    .prepare(
+      `UPDATE generation_tasks SET cancel_requested = 1
+        WHERE id = ? AND status IN ('queued','running')`
+    )
+    .run(taskId);
+  return info.changes > 0;
+}
+
+/** 将任务标记为已取消（S16）：置失败态 + last_error，便于前端识别与后续续跑。 */
+export function markTaskCancelled(taskId: number): void {
+  db.prepare(
+    `UPDATE generation_tasks
+      SET status = 'failed', last_error = '已取消', finished_at = ?
+      WHERE id = ?`
+  ).run(new Date().toISOString(), taskId);
 }

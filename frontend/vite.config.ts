@@ -19,4 +19,10 @@ export default defineConfig({
       '@': path.resolve(__dirname, 'src'),
     },
   },
+  // 一键预览阅读端：注入 READER_BASE（阅读端 dev=5173，生产用环境变量覆盖）
+  define: {
+    'import.meta.env.VITE_READER_BASE': JSON.stringify(
+      process.env.READER_BASE || 'http://localhost:5173'
+    ),
+  },
 });

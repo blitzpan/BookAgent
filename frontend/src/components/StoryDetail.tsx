@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useTaskPolling } from '../hooks/useTaskPolling';
 import { api, assetUrl } from '../api/client';
 import type {
   Story,
@@ -7,6 +8,7 @@ import type {
   GenerationTask,
   RunDetail,
   AudioSet,
+  PublishReadiness,
 } from '../types';
 import { storyStatusColor, runStatusColor } from '../status';
 import StoryConfigPanel from './StoryConfigPanel';
@@ -32,6 +34,54 @@ const AUDIO_SET_BADGE: Record<string, { label: string; cls: string }> = {
   failed: { label: '失败', cls: 'bg-red-100 text-red-700' },
 };
 
+/** 发布检查清单的一行：hard=true 表示缺了会拒绝发布。 */
+function CheckRow({
+  ok,
+  hard,
+  label,
+  value,
+  hint,
+  actionText,
+  onAction,
+}: {
+  ok: boolean;
+  hard: boolean;
+  label: string;
+  value: string;
+  hint?: string;
+  actionText?: string;
+  onAction?: () => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span
+        className={`text-xs px-2 py-0.5 rounded-full ${
+          ok
+            ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-200'
+            : hard
+              ? 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-200'
+              : 'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-200'
+        }`}
+      >
+        {ok ? '✅' : hard ? '❌' : '⚠️'}
+      </span>
+      <span className="font-medium w-12">{label}</span>
+      <span className="text-gray-600 dark:text-gray-300">{value}</span>
+      {!ok && hint && (
+        <span className="text-gray-500 dark:text-gray-400">· {hint}</span>
+      )}
+      {!ok && actionText && onAction && (
+        <button
+          onClick={onAction}
+          className="ml-auto text-xs px-2 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700"
+        >
+          {actionText}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function AudioSetBadge({ status }: { status: string }) {
   const b = AUDIO_SET_BADGE[status] ?? AUDIO_SET_BADGE.pending;
   return <span className={`text-xs px-2 py-0.5 rounded-full ${b.cls}`}>{b.label}</span>;
@@ -43,6 +93,8 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
     pages: Page[];
     audioSets: AudioSet[];
     selectedAudioSetId: number | null;
+    readiness: PublishReadiness;
+    segment_count: number;
   } | null>(null);
   const [runs, setRuns] = useState<GenerationRun[]>([]);
   const [runDetail, setRunDetail] = useState<RunDetail | null>(null);
@@ -65,9 +117,13 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
   const [ttsMessage, setTtsMessage] = useState<string | null>(null);
   const [ttsError, setTtsError] = useState<string | null>(null);
   const [busyTts, setBusyTts] = useState(false);
+  // S17：新建配音前的成本预估确认框
+  const [confirmTtsOpen, setConfirmTtsOpen] = useState(false);
   // ===== 热区（AI 一键生成，异步任务）状态 =====
   const [busyAi, setBusyAi] = useState(false);
   const [aiTask, setAiTask] = useState<GenerationTask | null>(null);
+  // ===== 单页补画任务状态（替代原先最长锁按钮 5 分钟的 for 轮询） =====
+  const [patchTask, setPatchTask] = useState<GenerationTask | null>(null);
   // 试听弹窗：当前正在试听的配音方案
   const [listen, setListen] = useState<{ id: number; name: string } | null>(null);
   // 当前选用方案的逐页音频（用于 PageCard 徽标试听）：pageNumber -> {zh[], en[]}
@@ -133,7 +189,10 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
     try {
       const r = await api.rewriteStory(storyId);
       setMessage(
-        `改写评价: ${r.feedback}${r.safetyNote ? '\n安全提示: ' + r.safetyNote : ''}`
+        `改写评价: ${r.feedback}${r.safetyNote ? '\n安全提示: ' + r.safetyNote : ''}` +
+          (r.hotspotsRemoved > 0
+            ? `\n改写已重排分页脚本，${r.hotspotsRemoved} 个热区已清除，请重新生成热区。`
+            : '')
       );
       await Promise.all([loadDetail(), loadRuns()]);
       onChanged();
@@ -266,13 +325,15 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
       : aiTask.status === 'failed' || !!aiTask.last_error
         ? 'resumable'
         : 'done';
+  // 后端 auto-generate 默认为「续跑」：只补还没有 AI 热区的页，已有结果与人工微调全部保留。
+  // 推倒重来走独立的「全部重新生成」按钮（显式 regenerate=true + 二次确认）。
   const aiButtonText =
     aiState === 'running'
       ? 'AI 生成中…'
       : aiState === 'resumable'
         ? '↻ 继续生成热区'
         : aiState === 'done'
-          ? '✦ 重新生成热区'
+          ? '✦ 生成热区（只补缺失页）'
           : '✦ AI 生成热区';
   const aiButtonTitle =
     aiState === 'running'
@@ -280,45 +341,78 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
       : aiState === 'resumable'
         ? '上次生成中断或有页失败，点击只补跑缺失的页'
         : aiState === 'done'
-          ? '重新生成（覆盖 AI 热区，人工微调保留）'
+          ? '在已有基础上继续：只补还没有热区的页，已生成与人工微调都保留'
           : '调用 AI 为每页各分段自动定位热区';
 
-  // 轮询热区任务进度（与配音/生图轮询互不干扰）
-  useEffect(() => {
-    if (!aiTask || !['queued', 'running'].includes(aiTask.status)) return;
-    const timer = setInterval(async () => {
-      try {
-        const { task } = await api.getTask(aiTask.id);
-        setAiTask(task);
-        if (!['queued', 'running'].includes(task.status)) {
-          if (task.status === 'completed') {
-            setMessage(
-              task.last_error
-                ? `热区生成完成（${task.last_error}）`
-                : '热区生成完成，可进入「热区设置」微调。'
-            );
-          } else {
-            setError(`热区任务 #${task.id} 失败：${task.last_error ?? '未知原因'}`);
-          }
-        }
-      } catch {
-        /* 忽略单次轮询失败 */
-      }
-    }, 2000);
-    return () => clearInterval(timer);
-  }, [aiTask]);
+  // 推倒重来：清除全部 AI 热区并重新定位（人工微调保留）。会按页数真实调用视觉模型，故二次确认
+  const regenerateAllHotspots = async () => {
+    if (
+      !confirm(
+        `将清除全部 AI 生成的热区并重新定位，约 ${pages.length} 次视觉模型调用（人工微调的热区会保留）。确定继续？`
+      )
+    )
+      return;
+    setBusyAi(true);
+    setError(null);
+    try {
+      const { taskId } = await api.autoGenerateHotspots(storyId, true);
+      const { task } = await api.getTask(taskId);
+      setAiTask(task);
+      setMessage(`已创建热区重生成任务 #${taskId}，后台逐页生成中…`);
+    } catch (e: any) {
+      setError(e?.message ?? String(e));
+    } finally {
+      setBusyAi(false);
+    }
+  };
 
-  // 刷新 / 重新进入故事后，从服务端恢复热区任务状态：
-  // 否则刷新页面会丢失「正在生成 / 可继续生成」状态，只剩一个无从下手的按钮。
+  // 轮询热区任务进度（统一用 useTaskPolling）
+  useTaskPolling(
+    aiTask,
+    (t) => setAiTask(t),
+    (t) => {
+      setAiTask(t);
+      if (t.status === 'completed') {
+        setMessage(
+          t.last_error
+            ? `热区生成完成（${t.last_error}）`
+            : '热区生成完成，可进入「热区设置」微调。'
+        );
+      } else {
+        setError(`热区任务 #${t.id} 失败：${t.last_error ?? '未知原因'}`);
+      }
+    }
+  );
+
+  // 刷新 / 重新进入故事后，从服务端一次拉取该故事所有进行中的任务并恢复轮询
+  //（生图、补画、配音、热区均覆盖），避免刷新即丢失「正在生成」状态。
   useEffect(() => {
     let cancelled = false;
     api
-      .getHotspotTask(storyId)
-      .then(({ task }) => {
-        if (!cancelled) setAiTask(task);
+      .listActiveTasks(storyId)
+      .then(({ tasks }) => {
+        if (cancelled) return;
+        for (const t of tasks) {
+          const mapped: GenerationTask = {
+            id: t.id,
+            story_id: storyId,
+            run_id: null,
+            page_id: t.pageId,
+            kind: t.kind as GenerationTask['kind'],
+            status: t.status as GenerationTask['status'],
+            progress: JSON.stringify(t.progress),
+            last_error: null,
+            created_at: null,
+            finished_at: null,
+          };
+          if (t.kind === 'tts') setTtsTask(mapped);
+          else if (t.kind === 'hotspot') setAiTask(mapped);
+          else if (t.kind === 'single_page') setPatchTask(mapped);
+          else setTask(mapped); // full
+        }
       })
       .catch(() => {
-        /* 恢复失败按「未生成」处理 */
+        /* 恢复失败按「无任务」处理 */
       });
     return () => {
       cancelled = true;
@@ -351,46 +445,30 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
     }
   };
 
-  // 轮询配音任务进度（独立 timer，与生图互不干扰）
-  useEffect(() => {
-    if (!ttsTask || !['queued', 'running'].includes(ttsTask.status)) return;
-    const timer = setInterval(async () => {
-      try {
-        const { task } = await api.getTask(ttsTask.id);
-        setTtsTask(task);
-        if (!['queued', 'running'].includes(task.status)) {
-          const pr = task.progress ? JSON.parse(task.progress) : null;
-          setTtsMessage(
-            `配音完成：成功 ${pr?.done ?? '?'} / 失败 ${pr?.failed ?? 0}`
-          );
-          await loadAudio();
-          await loadDetail();
-          onChanged();
-        }
-      } catch {
-        /* 忽略单次轮询失败 */
-      }
-    }, 2000);
-    return () => clearInterval(timer);
-  }, [ttsTask, loadAudio, loadDetail, onChanged]);
+  // 轮询配音任务进度（统一用 useTaskPolling）
+  useTaskPolling(
+    ttsTask,
+    (t) => setTtsTask(t),
+    (t) => {
+      setTtsTask(t);
+      const pr = t.progress ? JSON.parse(t.progress) : null;
+      setTtsMessage(`配音完成：成功 ${pr?.done ?? '?'} / 失败 ${pr?.failed ?? 0}`);
+      void loadAudio();
+      void loadDetail();
+      onChanged();
+    }
+  );
 
-  // 轮询当前整书任务进度（仅在 queued/running 时）
-  useEffect(() => {
-    if (!task || !['queued', 'running'].includes(task.status)) return;
-    const timer = setInterval(async () => {
-      try {
-        const { task: t } = await api.getTask(task.id);
-        setTask(t);
-        if (!['queued', 'running'].includes(t.status)) {
-          await Promise.all([loadDetail(), loadRuns()]);
-          if (activeRunId != null) await loadRunDetail(activeRunId);
-        }
-      } catch {
-        /* 忽略单次轮询失败 */
-      }
-    }, 2000);
-    return () => clearInterval(timer);
-  }, [task, activeRunId, loadDetail, loadRuns, loadRunDetail]);
+  // 轮询当前整书生图任务进度（统一用 useTaskPolling）
+  useTaskPolling(
+    task,
+    (t) => setTask(t),
+    (t) => {
+      setTask(t);
+      void Promise.all([loadDetail(), loadRuns()]);
+      if (activeRunId != null) void loadRunDetail(activeRunId);
+    }
+  );
 
   const handlePublish = async () => {
     setBusy(true);
@@ -419,32 +497,57 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
     }
   };
 
+  // 人工上传本地图片作为某页插图（S15：同步落盘，不触发图像模型）
+  const handleUploadImage = async (pageId: number, dataUrl: string) => {
+    try {
+      await api.addPageImage(pageId, { image: dataUrl });
+      setMessage('已上传本地图片并设为该页默认插图。');
+      if (activeRunId != null) await loadRunDetail(activeRunId);
+    } catch (e: any) {
+      setError(e?.message ?? String(e));
+    }
+  };
+
+  // 任务取消（S16，页级）：置标记后服务端在当前页跑完即停，已完成部分保留
+  const handleCancelTask = async (taskId: number) => {
+    try {
+      await api.cancelTask(taskId);
+      setMessage(`已请求取消任务 #${taskId}，进行中的页跑完即停，已完成部分保留。`);
+    } catch (e: any) {
+      setError(e?.message ?? String(e));
+    }
+  };
+
   // 单页补画：只是给当前版本追加候选图，不产生新版本
   const handleGenerateNew = async (pageId: number) => {
     setBusyPageId(pageId);
     setError(null);
     try {
       const { taskId } = await api.addPageImage(pageId, { kind: 'manual_new' });
+      const { task } = await api.getTask(taskId);
+      setPatchTask(task); // 交由 useTaskPolling 统一轮询，按钮立即释放
       setMessage(`已提交单页补画任务 #${taskId}，生成中…`);
-      for (let i = 0; i < 150; i++) {
-        const { task: t } = await api.getTask(taskId);
-        if (t.status === 'completed' || t.status === 'failed') {
-          setMessage(
-            t.status === 'completed'
-              ? '补画完成，已在候选区追加新图（可点击选为默认）。'
-              : `补画失败：${t.last_error ?? '未知原因'}`
-          );
-          break;
-        }
-        await new Promise((r) => setTimeout(r, 2000));
-      }
-      if (activeRunId != null) await loadRunDetail(activeRunId);
     } catch (e: any) {
       setError(e?.message ?? String(e));
-    } finally {
       setBusyPageId(null);
     }
   };
+
+  // 单页补画轮询（替代原先锁按钮最长 5 分钟的 for 循环）
+  useTaskPolling(
+    patchTask,
+    (t) => setPatchTask(t),
+    (t) => {
+      setPatchTask(t);
+      setMessage(
+        t.status === 'completed'
+          ? '补画完成，已在候选区追加新图（可点击选为默认）。'
+          : `补画失败：${t.last_error ?? '未知原因'}`
+      );
+      setBusyPageId(null);
+      if (activeRunId != null) void loadRunDetail(activeRunId);
+    }
+  );
 
   const handleDelete = async () => {
     if (!confirm('确认删除该故事？')) return;
@@ -468,6 +571,18 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
   const taskProgress = task?.progress ? JSON.parse(task.progress) : null;
   const estimateCalls =
     (pages.length || 0) * genCfg.initial_retry_budget * (1 + genCfg.max_sequence_retry);
+
+  // 发布检查：图与文本是硬门禁（缺则后端 409 拒绝），配音与热区是软提示
+  const readiness = detail?.readiness ?? null;
+  const missingImages = readiness?.images ?? [];
+  const missingTexts = readiness?.texts ?? [];
+  const missingHotspots = readiness?.hotspots ?? [];
+  const blockedReasons: string[] = [];
+  if (missingImages.length > 0)
+    blockedReasons.push(`第 ${missingImages.join('、')} 页缺插图`);
+  if (missingTexts.length > 0)
+    blockedReasons.push(`第 ${missingTexts.join('、')} 页缺中英文本`);
+  const publishBlocked = blockedReasons.length > 0;
 
   return (
     <div className="space-y-6">
@@ -523,9 +638,12 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
         )}
         {story.status === '生图完成待审批' && (
           <button
-            disabled={busy || isGenerating}
+            disabled={busy || isGenerating || publishBlocked}
+            title={
+              publishBlocked ? `不可发布：${blockedReasons.join('；')}` : undefined
+            }
             onClick={handlePublish}
-            className="px-4 py-2 rounded-lg bg-green-600 text-white disabled:opacity-50"
+            className="px-4 py-2 rounded-lg bg-green-600 text-white disabled:opacity-50 disabled:cursor-not-allowed"
           >
             审批发布
           </button>
@@ -539,7 +657,7 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
         {/* 配音（TTS）：独立按钮，violet 区别于生图 indigo */}
         <button
           disabled={busyTts || isGeneratingTts}
-          onClick={() => startTts(true)}
+          onClick={() => setConfirmTtsOpen(true)}
           title="始终新建一组配音方案（用于多组对比试听）"
           className="px-4 py-2 rounded-lg bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-200 hover:bg-violet-200 disabled:opacity-50 disabled:cursor-not-allowed"
         >
@@ -558,12 +676,53 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
         >
           {aiButtonText}
         </button>
+        {aiState === 'running' && aiTask && (
+          <button
+            onClick={() => handleCancelTask(aiTask.id)}
+            className="px-3 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 text-xs"
+          >
+            取消
+          </button>
+        )}
+        {aiState !== 'running' && (
+          <button
+            disabled={busyAi}
+            onClick={regenerateAllHotspots}
+            title="清除全部 AI 热区并重新定位（人工微调保留），会按页数重新调用视觉模型"
+            className="px-3 py-2 rounded-lg bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-200 hover:bg-amber-200 text-xs disabled:opacity-50"
+          >
+            全部重新生成
+          </button>
+        )}
         <button
           onClick={() => onOpenHotspots(storyId)}
           className="px-4 py-2 rounded-lg bg-purple-600 text-white hover:bg-purple-700"
         >
           热区设置
         </button>
+        <button
+          onClick={() => {
+            const base =
+              (import.meta.env.VITE_READER_BASE as string | undefined) ||
+              'http://localhost:5173';
+            window.open(`${base.replace(/\/$/, '')}/book/${storyId}`, '_blank');
+          }}
+          title="在阅读端打开这本书，用于验证热区与音频效果"
+          className="px-4 py-2 rounded-lg bg-sky-600 text-white hover:bg-sky-700"
+        >
+          🔗 在阅读器中预览
+        </button>
+        {readiness && readiness.pages > 0 && (
+          <span
+            className={
+              missingHotspots.length === 0
+                ? 'text-xs text-emerald-600 dark:text-emerald-400'
+                : 'text-xs text-amber-600 dark:text-amber-400'
+            }
+          >
+            已覆盖 {readiness.pages - missingHotspots.length}/{readiness.pages} 页
+          </span>
+        )}
         <button
           disabled={isGenerating}
           onClick={handleDelete}
@@ -572,6 +731,77 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
           删除
         </button>
       </div>
+
+      {readiness && readiness.pages > 0 && (
+        <section className="rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-bold">发布检查</h3>
+            {publishBlocked && (
+              <span className="text-xs text-red-600 dark:text-red-400">
+                不可发布：{blockedReasons.join('；')}
+              </span>
+            )}
+          </div>
+          <div className="space-y-2 text-sm">
+            <CheckRow
+              ok={missingImages.length === 0}
+              hard
+              label="插图"
+              value={`${readiness.pages - missingImages.length}/${readiness.pages} 页`}
+              hint={
+                missingImages.length > 0
+                  ? `缺第 ${missingImages.join('、')} 页`
+                  : undefined
+              }
+              actionText={canResume ? '补跑失败页' : undefined}
+              onAction={canResume ? () => setConfirmGen(true) : undefined}
+            />
+            <CheckRow
+              ok={missingTexts.length === 0}
+              hard
+              label="文本"
+              value={`${readiness.pages - missingTexts.length}/${readiness.pages} 页`}
+              hint={
+                missingTexts.length > 0
+                  ? `第 ${missingTexts.join('、')} 页缺中英文本，可点「改写」重排`
+                  : undefined
+              }
+            />
+            <CheckRow
+              ok={!readiness.audio}
+              hard={false}
+              label="配音"
+              value={
+                readiness.audio
+                  ? '未选用已完成的配音方案'
+                  : selectedAudioSetId != null
+                    ? `已选用 #${selectedAudioSetId}`
+                    : '已就绪'
+              }
+              hint={readiness.audio ? '允许发布为纯图文绘本' : undefined}
+              actionText={readiness.audio ? '新建配音' : undefined}
+              onAction={readiness.audio ? () => startTts(true) : undefined}
+            />
+            <CheckRow
+              ok={missingHotspots.length === 0}
+              hard={false}
+              label="热区"
+              value={`${readiness.pages - missingHotspots.length}/${readiness.pages} 页`}
+              hint={
+                missingHotspots.length > 0
+                  ? `第 ${missingHotspots.join('、')} 页尚无热区`
+                  : undefined
+              }
+              actionText={missingHotspots.length > 0 ? '去配热区' : undefined}
+              onAction={
+                missingHotspots.length > 0
+                  ? () => onOpenHotspots(storyId)
+                  : undefined
+              }
+            />
+          </div>
+        </section>
+      )}
 
       {message && (
         <div className="p-3 rounded-lg border-l-4 border-emerald-400 bg-emerald-50 dark:bg-emerald-900/30 text-sm whitespace-pre-line">
@@ -607,12 +837,20 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
         )}
 
         {ttsTask && ['queued', 'running'].includes(ttsTask.status) && (
-          <div className="text-sm text-gray-600 dark:text-gray-300">
-            配音任务 #{ttsTask.id} 进行中
-            {(() => {
-              const p = ttsTask.progress ? JSON.parse(ttsTask.progress) : null;
-              return p ? ` · 进度 ${p.done}/${p.total}${p.failed ? ` · 失败 ${p.failed}` : ''}` : '';
-            })()}
+          <div className="text-sm text-gray-600 dark:text-gray-300 flex items-center gap-3">
+            <span>
+              配音任务 #{ttsTask.id} 进行中
+              {(() => {
+                const p = ttsTask.progress ? JSON.parse(ttsTask.progress) : null;
+                return p ? ` · 进度 ${p.done}/${p.total}${p.failed ? ` · 失败 ${p.failed}` : ''}` : '';
+              })()}
+            </span>
+            <button
+              onClick={() => handleCancelTask(ttsTask.id)}
+              className="px-2 py-1 rounded-md bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 text-xs"
+            >
+              取消
+            </button>
           </div>
         )}
         {ttsTask?.status === 'failed' && (
@@ -777,13 +1015,21 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
       <section>
         <h3 className="text-lg font-bold mb-2">生成版本</h3>
         {task && ['queued', 'running'].includes(task.status) && (
-          <div className="mb-3 text-sm text-gray-600 dark:text-gray-300">
-            任务 #{task.id} 进行中
-            {taskProgress
-              ? ` · 进度 ${taskProgress.done}/${taskProgress.total}${
-                  taskProgress.failed ? ` · 失败 ${taskProgress.failed}` : ''
-                }`
-              : ''}
+          <div className="mb-3 text-sm text-gray-600 dark:text-gray-300 flex items-center gap-3">
+            <span>
+              任务 #{task.id} 进行中
+              {taskProgress
+                ? ` · 进度 ${taskProgress.done}/${taskProgress.total}${
+                    taskProgress.failed ? ` · 失败 ${taskProgress.failed}` : ''
+                  }`
+                : ''}
+            </span>
+            <button
+              onClick={() => handleCancelTask(task.id)}
+              className="px-2 py-1 rounded-md bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 text-xs"
+            >
+              取消
+            </button>
           </div>
         )}
         {task?.status === 'failed' && (
@@ -861,6 +1107,7 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
                 audio={audioByPage[pd.page.page_number] ?? null}
                 onSetDefault={handleSetDefault}
                 onGenerateNew={handleGenerateNew}
+                onUploadImage={handleUploadImage}
                 busyImageId={busyImageId}
                 busyPageId={busyPageId}
               />
@@ -886,6 +1133,38 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
             ))}
           </div>
         </section>
+      )}
+
+      {/* S17：新建配音前的成本预估二次确认 */}
+      {confirmTtsOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl max-w-sm w-full p-5">
+            <h3 className="text-lg font-bold mb-3">确认生成配音？</h3>
+            <p className="text-sm text-gray-700 dark:text-gray-200 mb-4">
+              将为 <b>{pages.length}</b> 页 · <b>{detail?.segment_count ?? 0}</b> 个分段 ×{' '}
+              <b>2</b> 种语言（中/英）合成，约 <b>{(detail?.segment_count ?? 0) * 2}</b> 条音频。
+              <br />
+              生成会立即消耗 TTS 调用额度，请确认。
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmTtsOpen(false)}
+                className="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700"
+              >
+                取消
+              </button>
+              <button
+                onClick={() => {
+                  setConfirmTtsOpen(false);
+                  startTts(true);
+                }}
+                className="px-4 py-2 rounded-lg bg-violet-600 text-white hover:bg-violet-700"
+              >
+                确认生成
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

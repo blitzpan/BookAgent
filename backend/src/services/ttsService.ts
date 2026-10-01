@@ -9,7 +9,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { EdgeTTS } from "edge-tts-universal";
-import { db, DATA_DIR } from "../db/sqlite";
+import { db, DATA_DIR, isCancelRequested, markTaskCancelled } from "../db/sqlite";
 import { getPagesByStory, getStoryRaw } from "./storyService";
 import type { SegmentRole } from "../types";
 
@@ -91,6 +91,7 @@ interface WorkItem {
 export interface RunTtsOptions {
   langs?: Lang[];
   regenerate?: boolean;
+  taskId?: number;
   onProgress?: (done: number, total: number, failed: number) => void;
 }
 
@@ -266,6 +267,11 @@ export async function runTtsForStory(
   let failed = 0;
 
   for (const job of jobs) {
+    // 取消检查（S16，页级）：被请求取消则停在当前 job 之前，已合成的音频保留。
+    if (opts.taskId != null && isCancelRequested(opts.taskId)) {
+      markTaskCancelled(opts.taskId);
+      return { ok: done, failed, total };
+    }
     // 续传：已存在且非强制重生成 → 跳过（done 仍计入，使进度从断点递增）。
     const exists = audioExists(
       audioSetId,

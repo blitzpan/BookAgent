@@ -12,6 +12,7 @@ interface Props {
   audio?: AudioByPage | null;
   onSetDefault: (imageId: number) => void;
   onGenerateNew: (pageId: number) => void;
+  onUploadImage: (pageId: number, dataUrl: string) => void;
   busyImageId?: number | null;
   busyPageId?: number | null;
 }
@@ -21,11 +22,33 @@ const PageCard: React.FC<Props> = ({
   audio,
   onSetDefault,
   onGenerateNew,
+  onUploadImage,
   busyImageId,
   busyPageId,
 }) => {
   const { page: p, default_image, candidates } = page;
   const defUrl = assetUrl(default_image?.image_path);
+  const [uploading, setUploading] = React.useState(false);
+  const fileRef = React.useRef<HTMLInputElement>(null);
+
+  const handlePick = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // 允许重复选同一文件
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      if (typeof dataUrl === 'string' && dataUrl.startsWith('data:image')) {
+        setUploading(true);
+        try {
+          onUploadImage(p.id, dataUrl);
+        } finally {
+          setUploading(false);
+        }
+      }
+    };
+    reader.readAsDataURL(file);
+  };
 
   // 顺序播放该语言该页所有分段音频（文本-语音同源，串语言/串页构造上不可能）
   const playSeq = (urls: string[]) => {
@@ -141,6 +164,20 @@ const PageCard: React.FC<Props> = ({
           className="mt-auto text-sm px-3 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
         >
           {busyPageId === p.id ? '生成中…' : '生成新候选图'}
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={handlePick}
+        />
+        <button
+          onClick={() => fileRef.current?.click()}
+          title="上传本地图片作为本页插图（不触发 AI 生图）"
+          className="mt-auto text-sm px-3 py-2 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 disabled:opacity-50"
+        >
+          {uploading ? '上传中…' : '上传图片'}
         </button>
       </div>
     </div>

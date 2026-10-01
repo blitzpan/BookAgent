@@ -8,6 +8,7 @@ import {
   createHotspot,
   updateHotspot,
   removeHotspot,
+  getHotspotRow,
   pageExists,
   savePageHotspots,
   getActiveHotspotTaskId,
@@ -129,12 +130,15 @@ export function registerHotspotRoutes(app: FastifyInstance): void {
     }
   });
 
-  // 单条更新
+  // 单条更新。可选 storyId（body）：传入时校验归属，防止跨故事改到别人的热区。
   app.patch("/api/hotspots/:hotspotId", async (req, reply) => {
     const hid = Number((req.params as any).hotspotId);
     if (!Number.isInteger(hid))
       return reply.code(400).send({ error: "invalid hotspotId" });
     const b = (req.body || {}) as any;
+    const ownerId = Number.isInteger(Number(b.story_id)) ? Number(b.story_id) : undefined;
+    if (ownerId != null && !getHotspotRow(hid, ownerId))
+      return reply.code(404).send({ error: "热区不存在" });
     const patch: Partial<HotspotInput> = {};
     if (b.segment_seq !== undefined) patch.segment_seq = Number(b.segment_seq);
     if (b.x !== undefined) patch.x = parseNum(b.x);
@@ -149,12 +153,14 @@ export function registerHotspotRoutes(app: FastifyInstance): void {
     return row;
   });
 
-  // 单条删除
+  // 单条删除。可选 ?story_id=：传入时校验归属。
   app.delete("/api/hotspots/:hotspotId", async (req, reply) => {
     const hid = Number((req.params as any).hotspotId);
     if (!Number.isInteger(hid))
       return reply.code(400).send({ error: "invalid hotspotId" });
-    const ok = removeHotspot(hid);
+    const q = (req.query || {}) as any;
+    const ownerId = Number.isInteger(Number(q.story_id)) ? Number(q.story_id) : undefined;
+    const ok = removeHotspot(hid, ownerId);
     if (!ok) return reply.code(404).send({ error: "热区不存在" });
     return { ok: true };
   });
@@ -172,7 +178,7 @@ export function registerHotspotRoutes(app: FastifyInstance): void {
 
     const b = (req.body || {}) as any;
     const taskId = createTask(id, story.current_run_id ?? null, null, "hotspot", {
-      regenerate: b.regenerate !== false,
+      regenerate: b.regenerate === true,
     } as any);
     void runTask(taskId);
     return reply.code(201).send({ taskId });

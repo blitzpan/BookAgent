@@ -1,5 +1,7 @@
 import type { FastifyInstance } from "fastify";
-import { db } from "../db/sqlite";
+import fs from "node:fs";
+import path from "node:path";
+import { db, DATA_DIR } from "../db/sqlite";
 import { getStoryRaw } from "../services/storyService";
 import { createTask } from "../services/generationService";
 import { runTask } from "../services/taskRunner";
@@ -140,6 +142,19 @@ export function registerTtsRoutes(app: FastifyInstance): void {
     }
     db.prepare(`DELETE FROM page_audio WHERE audio_set_id=?`).run(setId);
     db.prepare(`DELETE FROM audio_sets WHERE id=?`).run(setId);
+    // S18：DB 删除成功后同步删盘，避免孤儿 mp3（失败只记日志，不影响主流程）
+    try {
+      const dir = path.join(
+        DATA_DIR,
+        "assets",
+        String(set.story_id),
+        "audio_sets",
+        String(setId)
+      );
+      if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
+    } catch (e) {
+      console.error("删除配音方案音频文件失败:", e);
+    }
     return { ok: true };
   });
 

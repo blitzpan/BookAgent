@@ -2,7 +2,7 @@
 -- 依据 design/数据库设计.md，并含已确认的修订：
 --   R2: stories.status 含「生图部分失败」，统一「审批通过的作品」
 --   R8: stories 新增 target_page_count（改写/分页依赖，必须落库）
---   R9: generation_runs 新增 scope / target_page_id（整书 vs 单页 run）
+--   R9: 整书 vs 单页 run 的区分已迁到 generation_tasks.kind（full / single_page / tts / hotspot），generation_runs 表不再含 scope/target_page_id 列
 PRAGMA foreign_keys = ON;
 
 -- 注意：sql.js（WASM SQLite）不支持 journal_mode=WAL，故此处不设置。
@@ -87,6 +87,7 @@ CREATE TABLE IF NOT EXISTS generation_tasks (
   created_at          TEXT,
   started_at          TEXT,
   finished_at         TEXT,
+  cancel_requested    INTEGER DEFAULT 0,    -- 任务取消标记（页级：置位后当前页跑完即停，已完成的页保留）
   FOREIGN KEY (story_id) REFERENCES stories(id)
 );
 
@@ -126,9 +127,6 @@ CREATE TABLE IF NOT EXISTS sequence_checks (
   FOREIGN KEY (story_id) REFERENCES stories(id),
   FOREIGN KEY (generation_run_id) REFERENCES generation_runs(id)
 );
-
--- 开发阶段直接重建：旧版 page_audio（无 audio_set_id）先丢弃再建新表。
-DROP TABLE IF EXISTS page_audio;
 
 -- 页面内结构化文本行：支持角色/场景区分（旁白/对话/背景/音效）
 CREATE TABLE IF NOT EXISTS page_segments (

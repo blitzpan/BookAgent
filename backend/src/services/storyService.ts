@@ -2,6 +2,7 @@
 // 改写逻辑逐字移植自 App.tsx 的 handleGenerateClick 前半段，状态机走 canTransitionStory 守卫。
 
 import path from "node:path";
+import fs from "node:fs";
 import { db, DATA_DIR } from "../db/sqlite";
 import {
   STORY_STATUS,
@@ -70,6 +71,8 @@ export interface RewriteResult {
   feedback: string;
   pageCount: number;
   safetyNote: string | null;
+  /** 改写时清除的失效热区数量（页数重排后旧热区坐标/label 全部失效） */
+  hotspotsRemoved: number;
 }
 
 /** 改写：safety(前) → refine → safety(后) → parse，落 refined_text / pages / safety_result / rewrite_result。 */
@@ -137,11 +140,24 @@ export async function rewriteStory(storyId: number): Promise<RewriteResult> {
       style
     );
 
+    // 改写后页数/分段会重排，旧热区的坐标与 label 全部失效（且 label 是旧文本快照），
+    // 故在删除 pages 的同时一并清除旧热区，避免阅读端显示错位的热区。返回数量供前端提示。
+    const hotspotCount = (
+      db.prepare(`SELECT COUNT(*) AS n FROM page_hotspots WHERE story_id = ?`).get(storyId) as {
+        n: number;
+      }
+    ).n;
+
     // 落库：先清旧图/旧页/旧分段（否则旧数据悬挂），再写新的 pages + page_segments
+    // S18：先取出将被删除的插图路径，事务提交后同步删盘，避免孤儿 png
+    const staleImages = db
+      .prepare(`SELECT image_path FROM page_images WHERE story_id = ?`)
+      .all(storyId) as { image_path: string | null }[];
     const tx = db.transaction(() => {
       db.prepare(`DELETE FROM page_images WHERE story_id = ?`).run(storyId);
       db.prepare(`DELETE FROM pages WHERE story_id = ?`).run(storyId);
       db.prepare(`DELETE FROM page_segments WHERE story_id = ?`).run(storyId);
+      db.prepare(`DELETE FROM page_hotspots WHERE story_id = ?`).run(storyId);
       for (const p of parsedPages) {
         const info = db
           .prepare(
@@ -182,12 +198,24 @@ export async function rewriteStory(storyId: number): Promise<RewriteResult> {
     });
     tx();
 
+    // S18：删盘（DB 删除成功后），失败只记日志，不影响主流程
+    for (const r of staleImages) {
+      if (!r.image_path) continue;
+      try {
+        const abs = path.join(DATA_DIR, r.image_path);
+        if (fs.existsSync(abs)) fs.unlinkSync(abs);
+      } catch (e) {
+        console.error("删除旧插图文件失败:", r.image_path, e);
+      }
+    }
+
     return {
       storyId,
       mode,
       feedback,
       pageCount: parsedPages.length,
       safetyNote,
+      hotspotsRemoved: hotspotCount,
     };
   } catch (err) {
     // 改写失败：回退到「新建」（状态机允许 REWRITING -> 新建）
@@ -289,6 +317,79 @@ export function getPagesByStory(id: number): Page[] {
   return db
     .prepare(`SELECT * FROM pages WHERE story_id = ? ORDER BY page_number ASC`)
     .all(id) as Page[];
+}
+
+/** 全故事分段总数（用于配音成本预估，S17）。 */
+export function getSegmentCount(storyId: number): number {
+  const row = db
+    .prepare(`SELECT COUNT(*) AS c FROM page_segments WHERE story_id = ?`)
+    .get(storyId) as { c: number };
+  return row.c;
+}
+
+/** 发布前的资产完整性快照：缺什么列什么，供发布闸门与前端发布检查清单共用。 */
+export interface PublishReadiness {
+  /** 总页数 */
+  pages: number;
+  /** 缺默认图的页码（按当前生效版本判定） */
+  images: number[];
+  /** 缺中英任一文本的页码（空字符串按缺失处理：模型漏字段时会写入空串而非 NULL） */
+  texts: number[];
+  /** true = 缺配音（没有「已选用且已完成」的配音方案） */
+  audio: boolean;
+  /** 尚无热区的页码 */
+  hotspots: number[];
+}
+
+export function getPublishReadiness(id: number): PublishReadiness {
+  const story = getStoryRaw(id);
+  const runId = story?.current_run_id ?? null;
+  const pages = getPagesByStory(id);
+
+  const images: number[] = [];
+  const texts: number[] = [];
+  for (const p of pages) {
+    // 默认图按当前版本判定：与 reader 取图口径保持一致。
+    // 注意 db.prepare() 返回的语句 get() 后会自行 free，必须每次重新 prepare，不可跨迭代复用。
+    const ok =
+      runId != null &&
+      db
+        .prepare(
+          `SELECT 1 AS ok FROM page_images
+            WHERE page_id = ? AND generation_run_id = ? AND is_default = 1 LIMIT 1`
+        )
+        .get(p.id, runId) !== undefined;
+    if (!ok) images.push(p.page_number);
+    if (!(p.text_zh ?? "").trim() || !(p.text_en ?? "").trim()) {
+      texts.push(p.page_number);
+    }
+  }
+
+  const audioReady =
+    db
+      .prepare(
+        `SELECT 1 AS ok FROM audio_sets
+          WHERE story_id = ? AND is_selected = 1 AND status = 'completed' LIMIT 1`
+      )
+      .get(id) !== undefined;
+
+  const covered = new Set(
+    (
+      db
+        .prepare(`SELECT DISTINCT page_number FROM page_hotspots WHERE story_id = ?`)
+        .all(id) as Array<{ page_number: number }>
+    ).map((r) => Number(r.page_number))
+  );
+
+  return {
+    pages: pages.length,
+    images,
+    texts,
+    audio: !audioReady,
+    hotspots: pages
+      .map((p) => p.page_number)
+      .filter((n) => !covered.has(n)),
+  };
 }
 
 /** 设置当前生效版本（整书 run）。 */

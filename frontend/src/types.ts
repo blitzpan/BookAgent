@@ -48,6 +48,17 @@ export interface AudioSet {
 export interface StoryAudioState {
   audioSets: AudioSet[];
   selectedAudioSetId: number | null;
+  /** 发布前资产完整性快照（缺什么列什么）。 */
+  readiness: PublishReadiness;
+}
+
+/** 发布前资产完整性：images/texts 为硬门禁（非空即拒绝发布），audio/hotspots 为软提示。 */
+export interface PublishReadiness {
+  pages: number;
+  images: number[]; // 缺默认图的页码
+  texts: number[]; // 缺中英文本的页码
+  audio: boolean; // true = 缺配音
+  hotspots: number[]; // 无热区的页码
 }
 
 export interface Story {

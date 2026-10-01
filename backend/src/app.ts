@@ -8,7 +8,19 @@ import { ASSETS_DIR, BACKEND_DIR } from "./db/sqlite";
 import { registerRoutes } from "./routes";
 
 export async function buildApp() {
-  const app = Fastify({ logger: false });
+  const app = Fastify({ logger: false, bodyLimit: 20 * 1024 * 1024 });
+
+  // 统一错误处理器：所有未捕获异常/校验错误都收口为 {error} 结构，
+  // 避免把堆栈或 Fastify 默认 HTML 泄露给前端（前端只读 j.error）。
+  app.setErrorHandler((err, _req, reply) => {
+    const e = err as { statusCode?: number; message?: string };
+    const status = e.statusCode && e.statusCode >= 400 ? e.statusCode : 500;
+    if (status >= 500) console.error(err);
+    reply.code(status).send({ error: e.message || "服务器内部错误" });
+  });
+  app.setNotFoundHandler((_req, reply) => {
+    reply.code(404).send({ error: "接口不存在" });
+  });
 
   // CORS（零依赖手动实现，放行 reader 来源；生产用 CORS_ORIGIN 收紧）。
   const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
@@ -56,8 +68,41 @@ export async function buildApp() {
         : ext === "json"
         ? "application/json"
         : "image/png";
+    const stat = fs.statSync(abs);
+    // 图片/静态资源内容不可变（文件名含 id）→ 长期缓存；音频可接受较短缓存
+    const cacheControl =
+      ext === "mp3"
+        ? "public, max-age=3600"
+        : "public, max-age=31536000, immutable";
+    const res = reply.raw;
     reply.header("Content-Type", mime);
-    return reply.send(fs.readFileSync(abs));
+    reply.header("Accept-Ranges", "bytes");
+    reply.header("Cache-Control", cacheControl);
+
+    // 支持 Range（206）：音频可拖动进度条 / 断点续传
+    const range = req.headers.range;
+    if (range) {
+      const m = /bytes=(\d+)-(\d*)/.exec(range);
+      if (m) {
+        const start = Number(m[1]);
+        const end = m[2] ? Math.min(Number(m[2]), stat.size - 1) : stat.size - 1;
+        if (start <= end && end < stat.size) {
+          reply.code(206);
+          reply.header("Content-Range", `bytes ${start}-${end}/${stat.size}`);
+          reply.header("Content-Length", end - start + 1);
+          const stream = fs.createReadStream(abs, { start, end });
+          stream.on("error", () => res.destroy());
+          return reply.send(stream);
+        }
+      }
+      reply.header("Content-Range", `bytes */${stat.size}`);
+      return reply.code(416).send();
+    }
+
+    reply.header("Content-Length", stat.size);
+    const stream = fs.createReadStream(abs);
+    stream.on("error", () => res.destroy());
+    return reply.send(stream);
   });
 
   app.get("/api/health", async () => ({ ok: true }));

@@ -48,8 +48,18 @@ const HotspotSettings: React.FC<Props> = ({ storyId, onBack }) => {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  // 是否有未落库的改动（拖动/新增/删除只改本地状态，必须点保存才入库）
-  const [dirty, setDirty] = useState(false);
+  // 哪些页有未落库的改动（拖动/新增/删除只改本地状态，必须点保存才入库）。
+  // 用「按页集合」而非全局布尔，避免跨页改动在翻页时静默丢失。
+  const [dirtyPages, setDirtyPages] = useState<Set<number>>(new Set());
+  const dirty = dirtyPages.size > 0;
+  const markDirty = (pageNumber: number) =>
+    setDirtyPages((prev) => new Set(prev).add(pageNumber));
+  const clearDirty = (pageNumber: number) =>
+    setDirtyPages((prev) => {
+      const n = new Set(prev);
+      n.delete(pageNumber);
+      return n;
+    });
   const imgRef = useRef<HTMLImageElement>(null);
   const dragRef = useRef<{ lid: string; moved: boolean } | null>(null);
 
@@ -113,6 +123,37 @@ const HotspotSettings: React.FC<Props> = ({ storyId, onBack }) => {
   const page = pages[pageIdx];
   const pageHotspots = page ? hotspots.filter((h) => h.pageNumber === page.pageNumber) : [];
 
+  // 每页热区数（S9：覆盖率视图）。基于本地 hotspots 实时计算，编辑未保存也即时反映。
+  const countByPage = pages.map((p) => ({
+    page: p,
+    count: hotspots.filter((h) => h.pageNumber === p.pageNumber).length,
+  }));
+  const coveredPages = countByPage.filter((c) => c.count > 0).length;
+  const jumpToNextMissing = () => {
+    if (pages.length === 0) return;
+    for (let i = 1; i <= pages.length; i++) {
+      const idx = (pageIdx + i) % pages.length;
+      if (countByPage[idx].count === 0) {
+        setPageIdx(idx);
+        return;
+      }
+    }
+  };
+
+  // 翻页拦截（S5）：当前页有未保存改动时先询问是否保存再翻页；无改动不提问
+  const requestPageChange = async (targetIdx: number) => {
+    const cur = pages[pageIdx];
+    if (cur && dirtyPages.has(cur.pageNumber)) {
+      if (
+        !window.confirm(`第 ${cur.pageNumber} 页有未保存的热区改动，是否保存后翻页？`)
+      ) {
+        return; // 取消：停留本页，改动保留
+      }
+      await persist(cur.pageNumber); // 确定：先保存当前页
+    }
+    setPageIdx(targetIdx);
+  };
+
   const playUrl = (url?: string) => {
     const a = assetUrl(url);
     if (a) new Audio(a).play().catch(() => {});
@@ -147,7 +188,7 @@ const HotspotSettings: React.FC<Props> = ({ storyId, onBack }) => {
     };
     setHotspots((prev) => [...prev, nh]);
     setSelectedLid(nh.lid);
-    setDirty(true); // 仅本地新增，需点保存才入库
+    markDirty(page.pageNumber); // 仅本地新增，需点保存才入库
   };
 
   const onHotspotMouseDown = (e: React.MouseEvent, h: LocalHotspot) => {
@@ -169,7 +210,7 @@ const HotspotSettings: React.FC<Props> = ({ storyId, onBack }) => {
       dragRef.current.moved = true;
       const cx = (ev.clientX - rect.left) / rect.width;
       const cy = (ev.clientY - rect.top) / rect.height;
-      setDirty(true);
+      markDirty(h.pageNumber);
       setHotspots((prev) =>
         prev.map((it) =>
           it.lid === h.lid
@@ -195,7 +236,52 @@ const HotspotSettings: React.FC<Props> = ({ storyId, onBack }) => {
       setDeleted((prev) => [...prev, { id: h.id as number, pageNumber: h.pageNumber }]);
     setHotspots((prev) => prev.filter((it) => it.lid !== h.lid));
     if (selectedLid === h.lid) setSelectedLid(null);
-    setDirty(true);
+    markDirty(h.pageNumber);
+  };
+
+  // 键盘操作（S6）：方向键移动选中热区 ±0.5%（Shift ±0.1%），Delete/Backspace 删除，Esc 取消选中
+  const onHotspotKeyDown = (e: React.KeyboardEvent, h: LocalHotspot) => {
+    const keys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Delete', 'Backspace', 'Escape'];
+    if (!keys.includes(e.key)) return;
+    e.preventDefault();
+    if (e.key === 'Escape') {
+      setSelectedLid(null);
+      return;
+    }
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      removeHotspot(h);
+      return;
+    }
+    const step = e.shiftKey ? 0.001 : 0.005;
+    let { x, y } = h;
+    if (e.key === 'ArrowUp') y = Math.max(0, y - step);
+    else if (e.key === 'ArrowDown') y = Math.min(1, y + step);
+    else if (e.key === 'ArrowLeft') x = Math.max(0, x - step);
+    else if (e.key === 'ArrowRight') x = Math.min(1, x + step);
+    setSelectedLid(h.lid);
+    setHotspots((prev) => prev.map((it) => (it.lid === h.lid ? { ...it, x, y } : it)));
+    markDirty(h.pageNumber);
+  };
+
+  // 把右侧分段卡片「放到图上」：在页中心新建热区并选中，再交给键盘微调（替代拖拽主路径）
+  const placeSegmentOnImage = (seg: EditorSegment) => {
+    if (!page) return;
+    const label = `${seg.textZh}\n${seg.textEn}`;
+    const nh: LocalHotspot = {
+      lid: nextLid(),
+      id: null,
+      pageNumber: page.pageNumber,
+      segment_seq: seg.seq,
+      x: 0.5,
+      y: 0.5,
+      kind: 'audio',
+      label,
+      source: 'manual',
+      confidence: 1,
+    };
+    setHotspots((prev) => [...prev, nh]);
+    setSelectedLid(nh.lid);
+    markDirty(page.pageNumber);
   };
 
   // 只提交本页的变更项：新增（无 id）/ 与快照有差异 / 删除，后端一个事务完成
@@ -252,7 +338,7 @@ const HotspotSettings: React.FC<Props> = ({ storyId, onBack }) => {
           setMsg(`已保存：新增 ${r.created} / 更新 ${r.updated} / 删除 ${r.deleted}`);
         }
         await load();
-        setDirty(false);
+        clearDirty(pageNumber);
       } catch (e: any) {
         setErr(e?.message ?? String(e));
       } finally {
@@ -270,7 +356,7 @@ const HotspotSettings: React.FC<Props> = ({ storyId, onBack }) => {
   const handleRefresh = async () => {
     if (dirty && !window.confirm('有未保存的修改，确定重新加载吗？改动会丢失。')) return;
     await load();
-    setDirty(false);
+    setDirtyPages(new Set());
   };
 
   return (
@@ -291,7 +377,7 @@ const HotspotSettings: React.FC<Props> = ({ storyId, onBack }) => {
               className="text-xs px-2 py-1 rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-200"
               title="拖动/新增/删除只改本地，需点保存才入库"
             >
-              ● 未保存
+              ● 第 {[...dirtyPages].sort((a, b) => a - b).join("、")} 页未保存
             </span>
           )}
         </div>
@@ -347,7 +433,7 @@ const HotspotSettings: React.FC<Props> = ({ storyId, onBack }) => {
           <div className="rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4">
             <div className="flex items-center justify-between mb-3">
               <button
-                onClick={() => setPageIdx((i) => Math.max(0, i - 1))}
+                onClick={() => requestPageChange(pageIdx - 1)}
                 disabled={pageIdx === 0}
                 className="px-3 py-1.5 rounded-lg bg-gray-200 dark:bg-gray-700 disabled:opacity-40"
               >
@@ -355,9 +441,26 @@ const HotspotSettings: React.FC<Props> = ({ storyId, onBack }) => {
               </button>
               <span className="text-sm font-semibold">
                 第 {page.pageNumber} / {pages.length} 页
+                <span
+                  className={
+                    pageHotspots.length === 0
+                      ? ' ml-2 text-amber-600 dark:text-amber-400'
+                      : ' ml-2 text-emerald-600 dark:text-emerald-400'
+                  }
+                >
+                  · {pageHotspots.length} 个热区
+                </span>
               </span>
               <button
-                onClick={() => setPageIdx((i) => Math.min(pages.length - 1, i + 1))}
+                onClick={jumpToNextMissing}
+                disabled={coveredPages === pages.length}
+                title="跳到下一个还没有热区的页"
+                className="px-3 py-1.5 rounded-lg bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-200 disabled:opacity-40"
+              >
+                下一个无热区页 →
+              </button>
+              <button
+                onClick={() => requestPageChange(pageIdx + 1)}
                 disabled={pageIdx === pages.length - 1}
                 className="px-3 py-1.5 rounded-lg bg-gray-200 dark:bg-gray-700 disabled:opacity-40"
               >
@@ -391,8 +494,12 @@ const HotspotSettings: React.FC<Props> = ({ storyId, onBack }) => {
                   return (
                     <div
                       key={h.lid}
+                      tabIndex={0}
+                      role="button"
+                      aria-label={`热区：${(h.label ?? '').split('\n')[0] ?? ''}`}
                       onMouseDown={(e) => onHotspotMouseDown(e, h)}
-                      className={`absolute cursor-move rounded-md border-2 flex items-center justify-center text-center text-[12px] leading-snug px-2 py-1 whitespace-pre-line break-words select-none transition
+                      onKeyDown={(e) => onHotspotKeyDown(e, h)}
+                      className={`absolute cursor-move rounded-md border-2 flex items-center justify-center text-center text-[12px] leading-snug px-2 py-1 whitespace-pre-line break-words select-none transition outline-none focus:ring-2 focus:ring-sky-400
                         ${
                           lowConf
                             ? 'border-dashed border-gray-400 bg-gray-400/20 text-gray-700 dark:text-gray-200'
@@ -472,6 +579,13 @@ const HotspotSettings: React.FC<Props> = ({ storyId, onBack }) => {
                     className="px-2 py-1 rounded-md bg-indigo-600 text-white text-xs disabled:opacity-40"
                   >
                     ▶ 播放英文
+                  </button>
+                  <button
+                    onClick={() => placeSegmentOnImage(s)}
+                    title="在本页中心新建热区并选中，随后可用方向键微调位置"
+                    className="px-2 py-1 rounded-md bg-emerald-600 text-white text-xs"
+                  >
+                    ＋ 放到图上
                   </button>
                   <span className="text-[11px] text-gray-400">seq #{s.seq}</span>
                 </div>

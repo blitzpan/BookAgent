@@ -52,7 +52,9 @@ export const api = {
     inspiration_image?: string;
   }) => request<{ id: number }>('POST', '/api/stories', input),
   getStory: (id: number) =>
-    request<{ story: Story; pages: Page[] } & StoryAudioState>('GET', `/api/stories/${id}`),
+    request<
+      { story: Story; pages: Page[]; segment_count: number } & StoryAudioState
+    >('GET', `/api/stories/${id}`),
   updateStory: (
     id: number,
     body: {
@@ -70,6 +72,7 @@ export const api = {
       feedback: string;
       pageCount: number;
       safetyNote: string | null;
+      hotspotsRemoved: number;
     }>('POST', `/api/stories/${id}/rewrite`),
   generate: (id: number, cfg?: GenerateConfig) =>
     request<{ taskId: number; runId: number }>(
@@ -82,8 +85,24 @@ export const api = {
   getRun: (runId: number) => request<RunDetail>('GET', `/api/runs/${runId}`),
   getTask: (taskId: number) =>
     request<{ task: GenerationTask }>('GET', `/api/tasks/${taskId}`),
-  addPageImage: (pageId: number, body: { kind?: string }) =>
-    request<{ taskId: number }>('POST', `/api/pages/${pageId}/images`, body),
+  cancelTask: (taskId: number) =>
+    request<{ ok: boolean }>('POST', `/api/tasks/${taskId}/cancel`),
+  listActiveTasks: (storyId: number) =>
+    request<{
+      tasks: Array<{
+        id: number;
+        kind: string;
+        status: string;
+        pageId: number | null;
+        progress: { total: number; done: number; failed: number };
+      }>;
+    }>('GET', `/api/stories/${storyId}/tasks/active`),
+  addPageImage: (pageId: number, body: { kind?: string; image?: string }) =>
+    request<{ taskId?: number; imageId?: number }>(
+      'POST',
+      `/api/pages/${pageId}/images`,
+      body
+    ),
   setDefaultImage: (imageId: number) =>
     request<{ ok: true }>('PATCH', `/api/page-images/${imageId}`),
   publish: (id: number) =>
@@ -140,10 +159,11 @@ export const api = {
     request<Hotspot>('PATCH', `/api/hotspots/${id}`, patch),
   deleteHotspot: (id: number) =>
     request<{ ok: true }>('DELETE', `/api/hotspots/${id}`),
-  autoGenerateHotspots: (storyId: number) =>
+  autoGenerateHotspots: (storyId: number, regenerate?: boolean) =>
     request<{ taskId: number }>(
       'POST',
-      `/api/stories/${storyId}/hotspots/auto-generate`
+      `/api/stories/${storyId}/hotspots/auto-generate`,
+      regenerate === undefined ? {} : { regenerate }
     ),
   resumeHotspots: (storyId: number) =>
     request<{ taskId: number }>('POST', `/api/stories/${storyId}/hotspots/resume`),

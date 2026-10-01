@@ -33,9 +33,7 @@ export interface ApiStoryListItem {
 interface ApiRun {
   id: number;
   story_id: number;
-  scope: string;
   status: string;
-  progress: string | null;
   [k: string]: unknown;
 }
 interface ApiRunDetail {
@@ -49,7 +47,7 @@ interface ApiRunDetail {
 export async function getPublishedStories(): Promise<ShelfBook[]> {
   if (USE_MOCK) return mockStories();
   const data = await fetchJson<{ stories: ApiStoryListItem[] }>(
-    "/api/stories?status=审批通过的作品"
+    `/api/stories?status=${encodeURIComponent("审批通过的作品")}`
   );
   return data.stories.map((s) => ({
     id: s.id,

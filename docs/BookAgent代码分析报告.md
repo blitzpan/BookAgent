@@ -31,7 +31,7 @@
 | 1. AI 绘本内容生成（含角色一致性） | ✅ 最强 | 这是它的核心卖点，一致性做得很完整（见第三节） |
 | 2. 中英双语配音合成（TTS） | ✅ 已实现 | Edge TTS（`edge-tts-universal`）+ `page_segments`/`audio_sets`/`page_audio` 三表；旁白/对话/背景/音效分角色多音色；reader 含播放列表 + 自动翻页 + 中/英/双语切音轨（`backend/src/services/ttsService.ts`、`routes/tts.ts`） |
 | 3. 交互式 Web 阅读器 | 🟡 部分（我们已建 `reader/`） | 上游仅画廊；本仓库已新增阅读端：书架 + 翻页 + 双语切换 + 字号调节（见《BookAgent简介与配置说明.md》§3.5） |
-| 4. 图片热区交互 | ❌ 完全缺失 | 无任何热区概念 |
+| 4. 图片热区交互 | ✅ 已实现 | 后端 `routes/hotspots.ts` 10 个端点（含 auto-generate/resume/batch）、前端 `HotspotSettings.tsx` 完整拖拽编辑器、reader 点击发音 + 图外文案逐句点读 + 双语切换 |
 | 5. 双语资源与状态管理 | ✅ 已实现 | 改写阶段同步产出 `text_zh`+`text_en`（`storyService.ts`），TTS 产出中英两套音频，reader 按语言切换文本与音轨（自动翻页状态机见 `reader/src/components/PageView.tsx`） |
 | 6. 资产输出与消费 | ✅ 已实现 | 已结构化：图（`page_images`）+ 双语文本（`pages`/`page_segments`）+ 双语音频（`page_audio`/`audio_sets`）落盘 `/assets/*`，reader 经 `book-audio` 接口消费；仅**图片热区**尚无数据（见功能 4） |
 
@@ -98,8 +98,8 @@
 | 双语（中英） | 🟢 已实现 | 改写同步产出 `text_zh`+`text_en`，reader 支持中/英/双语切换（`storyService.ts` + `reader/src/components/PageView.tsx`） |
 | TTS 配音 | 🟢 已实现 | Edge TTS 分角色多音色 + `page_audio`/`audio_sets`/`page_segments` 三表；reader 含播放列表/自动翻页/双语切音轨（`backend/src/services/ttsService.ts`、`routes/tts.ts`） |
 | 交互式阅读器 | 🟢 已实现 | `reader/` 书架 + 翻页 + 双语 + 字号 + 音频播放（详见《BookAgent简介与配置说明.md》§3.5） |
-| 图片热区 | 🟡 仅渲染壳 | reader `PageView.tsx` 已渲染 `hotspots` 覆盖层，但后端/管理壳无热区编辑与落库，`hotspots` 恒空、实际不渲染（待建，见 §七） |
-| 资产输出供阅读端消费 | 🟢 已实现 | 图+双语文本+双语音频已结构化落库并经 `book-audio` 接口供 reader 消费；仅缺"热区配置"一块（见图片热区行） |
+| 图片热区 | 🟢 已实现 | 后端 `routes/hotspots.ts` 10 个端点（含 auto-generate/resume/batch）、前端 `HotspotSettings.tsx` 完整拖拽编辑器、reader 点击发音 + 图外文案逐句点读；`hotspots` 已有真实数据 |
+| 资产输出供阅读端消费 | 🟢 已实现 | 图+双语文本+双语音频+热区配置均已结构化落库并经 `book-audio`/`hotspot-editor` 等接口供 reader 消费 |
 | 生成端一致性 | 🟢 可借鉴 | 这是 BookAgent 最强处，可直接借鉴其 L1+L2+L4 思路 |
 
 ### 关键架构差异
@@ -118,10 +118,10 @@
 
 ### 不建议直接复用 / 需改造
 - 模型需按你的计划抽象成 **多 Provider**（SenseNova U1 / FLUX 2 Pro / Seedream 等）以适配国内访问——仓库现有 `gemini/qwen/seedream/ark` 可插拔架构已为此打好基础，可参照扩展。
-- 阅读器、中英双语 TTS、双语文本与资产结构化均已在自研中完成；**仅剩图片热区的"编辑/落库"一端待建**（reader 渲染壳已就绪，见 §六 图片热区行），这正是你文档里标注的"需自研"部分。
+- 阅读器、中英双语 TTS、双语文本、资产结构化、图片热区（编辑/落库/阅读端交互）均已在自研中完成；可直接复用其一致性算法与整体架构。
 
 ---
 
 ## 结论
 
-BookAgent 与你期望结果的差距已大幅收敛：它把最难的"角色跨页一致性（功能1）"做对了，而你的"生成端一致性算法"已直接借鉴它；**功能 2（TTS）、3（阅读器）、5（双语资源）、6（资产结构化）均已在自研中完成**。目前**仅剩"功能 4 图片热区"一块未完**——reader 渲染壳已写好，但后端/管理壳尚无热区编辑与落库（待建，设计见本仓库后续讨论）。正确定位仍是：把 BookAgent 作为"生成端一致性算法"的高分参考，而非整体方案。
+BookAgent 与你期望结果的差距已大幅收敛：它把最难的"角色跨页一致性（功能1）"做对了，而你的"生成端一致性算法"已直接借鉴它；**功能 2（TTS）、3（阅读器）、4（图片热区）、5（双语资源）、6（资产结构化）均已在自研中完成**。正确定位仍是：把 BookAgent 作为"生成端一致性算法"的高分参考，而非整体方案。

@@ -5,11 +5,13 @@ import {
   updateStory,
   listStories,
   getStoryDetail,
+  getPublishReadiness,
+  getSegmentCount,
   softDelete,
 } from "../services/storyService";
 import { STORY_STATUS } from "../constants/status";
 import { mergeGenerationConfig } from "../constants/generationConfig";
-import { hasActiveTaskForStory } from "../services/generationService";
+import { hasActiveTaskForStory, getActiveTasksForStory } from "../services/generationService";
 import { listAudioSets, getSelectedAudioSetId } from "../services/ttsService";
 
 export function registerStoryRoutes(app: FastifyInstance): void {
@@ -55,6 +57,31 @@ export function registerStoryRoutes(app: FastifyInstance): void {
     return { stories: listStories(status) };
   });
 
+  // 该故事进行中的任务（生图/补画/配音等），供前端恢复轮询时一次拉取
+  app.get("/api/stories/:id/tasks/active", async (req, reply) => {
+    const id = Number((req.params as any).id);
+    if (!Number.isInteger(id)) {
+      return reply.code(400).send({ error: "invalid id" });
+    }
+    const tasks = getActiveTasksForStory(id).map((t) => {
+      let progress = { total: 0, done: 0, failed: 0 };
+      try {
+        const p = t.progress ? JSON.parse(t.progress as string) : null;
+        if (p) progress = { total: p.total ?? 0, done: p.done ?? 0, failed: p.failed ?? 0 };
+      } catch {
+        /* 进度损坏不影响列表 */
+      }
+      return {
+        id: t.id,
+        kind: t.kind,
+        status: t.status,
+        pageId: t.page_id,
+        progress,
+      };
+    });
+    return { tasks };
+  });
+
   // 详情
   app.get("/api/stories/:id", async (req, reply) => {
     const id = Number((req.params as any).id);
@@ -71,6 +98,8 @@ export function registerStoryRoutes(app: FastifyInstance): void {
       pages: detail.pages,
       audioSets: listAudioSets(id),
       selectedAudioSetId: getSelectedAudioSetId(id),
+      readiness: getPublishReadiness(id),
+      segment_count: getSegmentCount(id),
     };
   });
 

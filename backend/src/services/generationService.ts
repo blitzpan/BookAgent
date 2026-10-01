@@ -3,7 +3,7 @@
 //  - 单页 run：对某页追加候选图（不翻默认）
 // 所有落库均在离散节点（每生成一张候选图即存一张），便于宕机续跑（见 taskRunner）。
 
-import { db } from "../db/sqlite";
+import { db, isCancelRequested, markTaskCancelled } from "../db/sqlite";
 import { STORY_STATUS } from "../constants/status";
 import {
   getStoryRaw,
@@ -195,6 +195,17 @@ export function hasActiveTaskForStory(storyId: number): boolean {
     )
     .get(storyId) as { c: number } | undefined;
   return (row?.c ?? 0) > 0;
+}
+
+/** 该故事所有进行中的任务（生图/补画/配音等），供前端恢复轮询时一次拉取。 */
+export function getActiveTasksForStory(storyId: number): GenerationTask[] {
+  return db
+    .prepare(
+      `SELECT * FROM generation_tasks
+        WHERE story_id = ? AND status IN ('queued','running')
+        ORDER BY id DESC`
+    )
+    .all(storyId) as GenerationTask[];
 }
 
 /** 启动续跑：把未完成的任务重新派发（执行状态在 task，不在 run）。 */
@@ -718,7 +729,21 @@ export async function runFullGeneration(taskId: number): Promise<void> {
     let failed = 0;
     const frameIssuesAll: string[] = [];
 
+    // 取消检查（S16，页级）：被请求取消时，当前页跑完即停，已完成的页保留，状态标 partial_failed 以便「继续生图」。
+    const maybeCancel = (): boolean => {
+      if (!isCancelRequested(taskId)) return false;
+      markTaskCancelled(taskId);
+      finishRun(run.id, failed > 0 ? "partial_failed" : "completed");
+      try {
+        setStatus(story.id, STORY_STATUS.GEN_PARTIAL_FAILED);
+      } catch {
+        /* 状态机冲突忽略 */
+      }
+      return true;
+    };
+
     for (let i = 0; i < pages.length; i++) {
+      if (maybeCancel()) return;
       const r = await runFrameLoop(pages[i], i, pagesText, ctx, true);
       if (r.bestRowId != null) done++;
       else failed++;
@@ -746,6 +771,7 @@ export async function runFullGeneration(taskId: number): Promise<void> {
           "IMPORTANT: Keep the main character and overall color palette consistent with earlier pages. Match the main character's species, approximate age, main clothing, and dominant colors from previous pages.";
         ctx.frameBudget = 2;
         for (let i = 0; i < pages.length; i++) {
+          if (maybeCancel()) return;
           if (problemSet.size > 0 && !problemSet.has(pages[i].page_number)) {
             continue;
           }
@@ -888,14 +914,22 @@ export async function runTtsGeneration(taskId: number): Promise<void> {
     const { failed } = await runTtsForStory(storyId, audioSetId, {
       langs: params.langs,
       regenerate: params.regenerate,
+      taskId,
       onProgress: (done, total, f) => setTaskProgress(taskId, total, done, f),
     });
-    const status = failed > 0 ? "interrupted" : "completed";
-    db.prepare(`UPDATE audio_sets SET status = ?, updated_at = ? WHERE id = ?`).run(
-      status,
-      now(),
-      audioSetId
-    );
+    // runTtsForStory 已按「全失败→failed / 部分→interrupted / 全成→completed」写好 audio_sets.status。
+    // 这里不要再用 failed>0 重算覆盖——全失败时会被误写成 interrupted。仅在非 failed 时补写成功态。
+    const cur = db
+      .prepare(`SELECT status FROM audio_sets WHERE id = ?`)
+      .get(audioSetId) as { status: string } | undefined;
+    if (cur && cur.status !== "failed") {
+      const status = failed > 0 ? "interrupted" : "completed";
+      db.prepare(`UPDATE audio_sets SET status = ?, updated_at = ? WHERE id = ?`).run(
+        status,
+        now(),
+        audioSetId
+      );
+    }
     finishTask(taskId, "completed", failed > 0 ? `${failed} 段合成失败` : null);
   } catch (err: any) {
     db.prepare(

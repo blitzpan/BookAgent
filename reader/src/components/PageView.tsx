@@ -72,11 +72,110 @@ function segmentStyle(role: ReaderSegment["role"], speaker?: string | null) {
   }
 }
 
+/**
+ * 图外文案列表（S4）：可点击逐句播放，与图上热区复用同一播放路径（含 S8 互斥）。
+ * 排序：仅图外组置顶、已标注组置后；组内按 seq 升序保叙事顺序，两组间加分隔标题。
+ */
+function SegmentList({
+  segments,
+  hotspots,
+  lang,
+  activeSeq,
+  onPlay,
+}: {
+  segments: ReaderSegment[];
+  hotspots?: Hotspot[];
+  lang: LangMode;
+  activeSeq: number | null;
+  onPlay: (seq: number) => void;
+}) {
+  const onImageSeqs = new Set<number>(
+    (hotspots ?? []).map((h) => h.segment_seq).filter((x): x is number => x != null)
+  );
+  const segs = segments ?? [];
+  const offImage = segs.filter((s) => !onImageSeqs.has(s.seq)).sort((a, b) => a.seq - b.seq);
+  const onImage = segs.filter((s) => onImageSeqs.has(s.seq)).sort((a, b) => a.seq - b.seq);
+
+  const renderRow = (s: ReaderSegment) => {
+    const onImg = onImageSeqs.has(s.seq);
+    const active = activeSeq === s.seq;
+    const hasAudio =
+      (lang !== "en" && !!s.audioUrls.zh) || (lang !== "zh" && !!s.audioUrls.en);
+    return (
+      <li key={s.seq}>
+        <button
+          disabled={!hasAudio}
+          onClick={() => onPlay(s.seq)}
+          title={hasAudio ? "点击播放该句" : "该语言暂无音频"}
+          className={`w-full text-left rounded-lg px-3 py-2 flex items-start gap-2 disabled:opacity-50 ${
+            active
+              ? "bg-sky-100 dark:bg-sky-900/40"
+              : "hover:bg-gray-100 dark:hover:bg-gray-700"
+          }`}
+        >
+          {onImg && (
+            <span className="shrink-0" title="图上也有热区">
+              📍
+            </span>
+          )}
+          <span className="flex-1">
+            {s.role === "sfx" ? (
+              <span className={segmentStyle("sfx", s.speaker)}>🔊 {s.speaker ?? "音效"}</span>
+            ) : (
+              <>
+                {lang !== "en" && (
+                  <p className={`caption-line ${segmentStyle(s.role, s.speaker)}`}>
+                    {s.role === "dialogue" && s.speaker && (
+                      <span className="caption-lang">{s.speaker}：</span>
+                    )}
+                    {s.textZh}
+                  </p>
+                )}
+                {lang !== "zh" && (
+                  <p className={`caption-line ${segmentStyle(s.role, s.speaker)}`}>
+                    {s.role === "dialogue" && s.speaker && (
+                      <span className="caption-lang">{s.speaker}: </span>
+                    )}
+                    {s.textEn}
+                  </p>
+                )}
+              </>
+            )}
+          </span>
+        </button>
+      </li>
+    );
+  };
+
+  return (
+    <div className="flex flex-col gap-3">
+      {offImage.length > 0 && (
+        <>
+          <p className="text-xs text-gray-400">图外文案（点击播放）</p>
+          <ul className="flex flex-col gap-1">{offImage.map(renderRow)}</ul>
+        </>
+      )}
+      {onImage.length > 0 && (
+        <>
+          <p className="text-xs text-gray-400">已标注在图上的文案</p>
+          <ul className="flex flex-col gap-1">{onImage.map(renderRow)}</ul>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function PageView({ page, lang, fontSize, onEnded }: Props) {
   const caps = captions(page, lang);
   const playlist = buildPlaylist(page.segments, lang);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const hotspotAudioRef = useRef<HTMLAudioElement | null>(null);
   const bubbleTimer = useRef<number | null>(null);
+  const [activeSeq, setActiveSeq] = useState<number | null>(null);
+  const stopHotspotAudio = () => {
+    hotspotAudioRef.current?.pause();
+    hotspotAudioRef.current = null;
+  };
   const [playing, setPlaying] = useState(false);
   const [idx, setIdx] = useState(0);
   const [autoFlip, setAutoFlip] = useState(false);
@@ -87,6 +186,7 @@ export default function PageView({ page, lang, fontSize, onEnded }: Props) {
     setPlaying(false);
     setIdx(0);
     audioRef.current?.pause();
+    stopHotspotAudio();
   }, [page.pageNumber, lang]);
 
   const playCurrent = (i: number) => {
@@ -98,6 +198,7 @@ export default function PageView({ page, lang, fontSize, onEnded }: Props) {
     }
     const a = new Audio(item.url);
     audioRef.current = a;
+    stopHotspotAudio();
     a.onended = () => {
       const next = i + 1;
       setIdx(next);
@@ -130,6 +231,7 @@ export default function PageView({ page, lang, fontSize, onEnded }: Props) {
       return;
     }
     if (!playlist.length) return;
+    stopHotspotAudio();
     const start = idx >= playlist.length ? 0 : idx;
     setIdx(start);
     setPlaying(true);
@@ -153,17 +255,31 @@ export default function PageView({ page, lang, fontSize, onEnded }: Props) {
       .map((l) => seg.audioUrls[l])
       .filter(Boolean) as string[];
     if (!urls.length) return;
+    // 与整页朗读互斥：点热区发音时，先停掉整页朗读
+    audioRef.current?.pause();
+    setPlaying(false);
+    stopHotspotAudio();
     let i = 0;
     const playNext = () => {
       const a = new Audio(urls[i]);
+      hotspotAudioRef.current = a;
       a.onended = () => {
+        setActiveSeq(null);
         if (++i < urls.length) playNext();
+        else hotspotAudioRef.current = null;
       };
       a.play().catch(() => {
         if (++i < urls.length) playNext();
+        else hotspotAudioRef.current = null;
       });
     };
     playNext();
+  };
+
+  // 图外文案点击播放（S4）：与图上热区复用同一播放路径，套用 S8 互斥
+  const playSegment = (seq: number) => {
+    setActiveSeq(seq);
+    playHotspotAudio(seq);
   };
 
   const onHotspotClick = (h: Hotspot) => {
@@ -240,29 +356,13 @@ export default function PageView({ page, lang, fontSize, onEnded }: Props) {
       <div className="page-caption flex-1" style={{ fontSize: `${fontSize}px` }}>
         {/* 优先按分段渲染（角色/场景区分）；无分段时退回整页旁白 */}
         {page.segments && page.segments.length > 0 ? (
-          <div className="flex flex-col gap-2">
-            {page.segments.map((s) => (
-              <div key={s.seq} className="flex flex-col">
-                {s.role === "sfx" ? (
-                  <span className={segmentStyle("sfx")}>🔊 {s.speaker ?? "音效"}</span>
-                ) : lang === "zh" || lang === "both" ? (
-                  <p className={`caption-line ${segmentStyle(s.role, s.speaker)}`}>
-                    {s.role === "dialogue" && s.speaker && (
-                      <span className="caption-lang">{s.speaker}：</span>
-                    )}
-                    {s.textZh}
-                  </p>
-                ) : (
-                  <p className={`caption-line ${segmentStyle(s.role, s.speaker)}`}>
-                    {s.role === "dialogue" && s.speaker && (
-                      <span className="caption-lang">{s.speaker}: </span>
-                    )}
-                    {s.textEn}
-                  </p>
-                )}
-              </div>
-            ))}
-          </div>
+          <SegmentList
+            segments={page.segments}
+            hotspots={page.hotspots}
+            lang={lang}
+            activeSeq={activeSeq}
+            onPlay={playSegment}
+          />
         ) : (
           caps.map((c, i) => (
             <p key={i} className="caption-line">

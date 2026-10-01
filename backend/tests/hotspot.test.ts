@@ -174,6 +174,80 @@ describe("图片热区 CRUD / AI 生成", () => {
     expect(after[0].x).toBeCloseTo(0.9, 5);
   });
 
+  it("再次生成默认续跑：已有 AI 热区保留（id 不变），不清空重来", async () => {
+    await clearHotspots();
+    const gen = await app.inject({
+      method: "POST",
+      url: `/api/stories/${storyId}/hotspots/auto-generate`,
+    });
+    await pollTask(gen.json().taskId);
+
+    const list = async () =>
+      (await app.inject({ method: "GET", url: `/api/stories/${storyId}/hotspots` }))
+        .json().hotspots as Array<{ id: number; source: string }>;
+    const before = (await list()).map((h) => h.id).sort((a, b) => a - b);
+    expect(before.length).toBeGreaterThan(0);
+
+    // 不传 regenerate → 默认续跑
+    const again = await app.inject({
+      method: "POST",
+      url: `/api/stories/${storyId}/hotspots/auto-generate`,
+    });
+    await pollTask(again.json().taskId);
+
+    const after = (await list()).map((h) => h.id).sort((a, b) => a - b);
+    // 已有热区应原样保留（id 不变），而不是被清空后重建
+    for (const id of before) expect(after).toContain(id);
+  });
+
+  it("续跑保留人工对 AI 热区的微调；全部重新生成（regenerate=true）才覆盖", async () => {
+    // 判据说明：不能用 id 变化判断「是否重建」——SQLite 在整表删除后会复用 rowid，
+    // 新行 id 会从 1 重新开始。因此改用行为判据：人工挪动过的坐标是否被还原。
+    await clearHotspots();
+    const gen = await app.inject({
+      method: "POST",
+      url: `/api/stories/${storyId}/hotspots/auto-generate`,
+    });
+    await pollTask(gen.json().taskId);
+
+    const list = async () =>
+      (await app.inject({ method: "GET", url: `/api/stories/${storyId}/hotspots` }))
+        .json().hotspots as Array<{ id: number; x: number; source: string }>;
+
+    const before = await list();
+    expect(before.length).toBeGreaterThan(0);
+    const target = before[0];
+    const movedX = 0.137; // 取一个远离 mock 网格的怪值，避免与 AI 落点重合
+    await app.inject({
+      method: "PATCH",
+      url: `/api/hotspots/${target.id}`,
+      payload: { x: movedX },
+    });
+
+    // ① 默认续跑：该页已有 AI 热区 → 跳过 → 人工微调保留
+    const again = await app.inject({
+      method: "POST",
+      url: `/api/stories/${storyId}/hotspots/auto-generate`,
+    });
+    await pollTask(again.json().taskId);
+    const afterResume = (await list()).find((h) => h.id === target.id);
+    expect(afterResume).toBeTruthy();
+    expect(afterResume!.x).toBeCloseTo(movedX, 6);
+
+    // ② 显式 regenerate=true：清空 AI 热区重来 → 人工挪动的坐标被覆盖
+    const regen = await app.inject({
+      method: "POST",
+      url: `/api/stories/${storyId}/hotspots/auto-generate`,
+      payload: { regenerate: true },
+    });
+    await pollTask(regen.json().taskId);
+    const afterRegen = await list();
+    expect(afterRegen.length).toBeGreaterThan(0);
+    expect(
+      afterRegen.some((h) => Math.abs(h.x - movedX) < 1e-6)
+    ).toBe(false);
+  });
+
   it("可查询最近一次热区任务（刷新页面后恢复按钮状态）", async () => {
     await clearHotspots();
     const gen = await app.inject({

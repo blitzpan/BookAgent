@@ -9,7 +9,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { Type } from "@google/genai";
 import type { GenerationTask } from "../types";
-import { db, DATA_DIR } from "../db/sqlite";
+import { db, DATA_DIR, isCancelRequested, markTaskCancelled } from "../db/sqlite";
 import { getPagesByStory, getStoryRaw } from "./storyService";
 import { getBookAudio, getSelectedAudioSetId } from "./ttsService";
 import {
@@ -113,13 +113,16 @@ export function createHotspot(
     .get(Number(info.lastInsertRowid)) as HotspotRow;
 }
 
+/**
+ * 单条更新。传 storyId 时校验归属（防止用别的故事的 id 改到别人的热区）；
+ * 不传则行为同前，仅按 id 更新（内部批量路径已自行校验过 story_id）。
+ */
 export function updateHotspot(
   id: number,
-  patch: Partial<HotspotInput>
+  patch: Partial<HotspotInput>,
+  storyId?: number
 ): HotspotRow | null {
-  const existing = db
-    .prepare(`SELECT * FROM page_hotspots WHERE id = ?`)
-    .get(id) as HotspotRow | undefined;
+  const existing = getHotspotRow(id, storyId);
   if (!existing) return null;
 
   const merged = {
@@ -156,8 +159,28 @@ export function updateHotspot(
   return db.prepare(`SELECT * FROM page_hotspots WHERE id = ?`).get(id) as HotspotRow;
 }
 
-export function removeHotspot(id: number): boolean {
-  const info = db.prepare(`DELETE FROM page_hotspots WHERE id = ?`).run(id);
+/** 读取单条热区；传 storyId 时校验归属。 */
+export function getHotspotRow(
+  id: number,
+  storyId?: number
+): HotspotRow | undefined {
+  return (
+    storyId == null
+      ? db.prepare(`SELECT * FROM page_hotspots WHERE id = ?`).get(id)
+      : db
+          .prepare(`SELECT * FROM page_hotspots WHERE id = ? AND story_id = ?`)
+          .get(id, storyId)
+  ) as HotspotRow | undefined;
+}
+
+/** 单条删除。传 storyId 时校验归属。 */
+export function removeHotspot(id: number, storyId?: number): boolean {
+  const info =
+    storyId == null
+      ? db.prepare(`DELETE FROM page_hotspots WHERE id = ?`).run(id)
+      : db
+          .prepare(`DELETE FROM page_hotspots WHERE id = ? AND story_id = ?`)
+          .run(id, storyId);
   return info.changes > 0;
 }
 
@@ -209,7 +232,8 @@ export function savePageHotspots(
       const id = Number(u.id);
       if (!Number.isInteger(id)) continue;
       const { id: _drop, ...patch } = u;
-      if (updateHotspot(id, patch)) updated += 1;
+      // 与 delete 分支一致：校验归属，避免用别的故事的 id 改到别人的热区
+      if (updateHotspot(id, patch, storyId)) updated += 1;
     }
 
     for (const c of changes.create ?? []) {
@@ -244,6 +268,7 @@ function getSegmentsForPage(pageId: number) {
 export interface AutoHotspotOptions {
   /** true = 保留已有 AI 热区、只补缺失页（崩溃续跑 / 「继续生成」）；false = 先清 AI 热区再全量重生成 */
   resume?: boolean;
+  taskId?: number;
   onProgress?: (done: number, total: number) => void;
 }
 
@@ -286,6 +311,11 @@ export async function autoGenerateHotspots(
   };
 
   for (const page of pages) {
+    // 取消检查（S16，页级）：被请求取消则停在当前页之前，已生成热区保留。
+    if (opts.taskId != null && isCancelRequested(opts.taskId)) {
+      markTaskCancelled(opts.taskId);
+      break;
+    }
     if (resume && hasAi(page.page_number)) {
       skipped += 1;
       tick();
@@ -532,12 +562,15 @@ export async function runHotspotGeneration(taskId: number): Promise<void> {
   } catch {
     /* ignore */
   }
-  const resume = params.regenerate === false || !!task.started_at;
+  // 默认续跑：只补「还没有 AI 热区」的页，已有结果与人工微调全部保留。
+  // 只有显式 regenerate=true（前端的「全部重新生成」）才清空 AI 热区重来。
+  const resume = params.regenerate !== true;
 
   setTaskStatus(taskId, "running");
   try {
     const r = await autoGenerateHotspots(storyId, {
       resume,
+      taskId,
       onProgress: (done, total) => setTaskProgress(taskId, total, done, 0),
     });
     finishTask(

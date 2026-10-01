@@ -43,11 +43,9 @@ const STORY_TRANSITIONS: Record<string, string[]> = {
     STORY_STATUS.PENDING_PUBLISH,
     STORY_STATUS.DELETED,
   ],
-  生图部分失败: [
-    STORY_STATUS.GENERATING,
-    STORY_STATUS.PENDING_PUBLISH,
-    STORY_STATUS.DELETED,
-  ],
+  // 部分失败必须先补跑（→ 生图中）直到全部成功，不允许绕过「生图完成待审批」直接发行：
+  // 否则缺图页会被发布出去，阅读端出现空白页。
+  生图部分失败: [STORY_STATUS.GENERATING, STORY_STATUS.DELETED],
   待审批发行: [
     STORY_STATUS.PUBLISHED,
     STORY_STATUS.GEN_DONE,
