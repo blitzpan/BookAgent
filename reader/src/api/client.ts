@@ -101,6 +101,7 @@ export async function getBook(storyId: number): Promise<ReaderPage[]> {
           seq: number;
           role: string;
           speaker: string | null;
+          speakerEn: string | null;
           textZh: string;
           textEn: string;
           audioUrls: { zh?: string; en?: string };
@@ -116,6 +117,7 @@ export async function getBook(storyId: number): Promise<ReaderPage[]> {
             ? s.role
             : "narration") as ReaderSegment["role"],
           speaker: s.speaker,
+          speakerEn: s.speakerEn ?? null,
           textZh: s.textZh,
           textEn: s.textEn,
           audioUrls: {

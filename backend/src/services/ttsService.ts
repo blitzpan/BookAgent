@@ -18,6 +18,12 @@ const now = () => new Date().toISOString();
 // 单次 TTS 合成的硬超时：避免离线/网络异常时 synthesize() 永久挂起，
 // 导致 audio_sets 永远停在 generating、任务永不结束（前端一直显示"配音中"）。
 const TTS_SYNTH_TIMEOUT_MS = Number(process.env.TTS_SYNTH_TIMEOUT_MS) || 40000;
+// 单段失败后的重试次数（含首次共 N+1 次），缓解微软限流 / 网络抖动导致的 NoAudioReceived。
+const TTS_RETRY = Number(process.env.TTS_RETRY ?? 3);
+// 退避基数：第 k 次重试前等待 base * 2^k ms（指数退避）。
+const TTS_RETRY_BASE_MS = Number(process.env.TTS_RETRY_BASE_MS ?? 800);
+// 段与段之间的限速间隔：连续发请求易被微软限流返回空流，留一点间隔降低概率。
+const TTS_INTERVAL_MS = Number(process.env.TTS_INTERVAL_MS ?? 300);
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -35,11 +41,17 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   });
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 export type Lang = "zh" | "en";
 
 /** 配音方案配置：可选各角色/语言音色覆盖 + 合成的语种。 */
 export interface AudioSetConfig {
   voices?: Partial<Record<SegmentRole, Partial<Record<Lang, string>>>>;
+  // 按角色名指定音色（如 {"小兔子": {"zh": "zh-CN-YunxiNeural"}}），优先级高于按 role 的 voices。
+  voicesBySpeaker?: Partial<Record<string, Partial<Record<Lang, string>>>>;
   langs?: Lang[];
 }
 
@@ -61,10 +73,16 @@ const DEFAULT_VOICE: Record<Lang, Record<SegmentRole, string>> = {
 function pickVoice(
   role: SegmentRole,
   lang: Lang,
-  config?: AudioSetConfig | null
+  config?: AudioSetConfig | null,
+  speaker?: string | null
 ): string {
+  // 1) 角色名精确音色（最高优先）：不同角色可用不同声音讲对白。
+  const sv = speaker ? config?.voicesBySpeaker?.[speaker]?.[lang] : undefined;
+  if (sv) return sv;
+  // 2) 按角色类型覆盖（narration/dialogue/...）。
   const v = config?.voices?.[role]?.[lang];
   if (v) return v;
+  // 3) 默认音色。
   return DEFAULT_VOICE[lang][role];
 }
 
@@ -132,13 +150,16 @@ function buildWorkItems(storyId: number): WorkItem[] {
       });
     } else {
       for (const s of segs) {
+        const role = (["narration", "dialogue", "background", "sfx"].includes(s.role)
+          ? s.role
+          : "narration") as SegmentRole;
+        // background/sfx 是环境/音效描述，不是角色台词，不应被 TTS 朗读，跳过。
+        if (role === "background" || role === "sfx") continue;
         items.push({
           pageId: s.page_id,
           pageNumber: page.page_number,
           segmentId: s.id,
-          role: (["narration", "dialogue", "background", "sfx"].includes(s.role)
-            ? s.role
-            : "narration") as SegmentRole,
+          role,
           speaker: s.speaker ?? null,
           textZh: s.text_zh || "",
           textEn: s.text_en || "",
@@ -172,31 +193,50 @@ function audioExists(
   return !!row;
 }
 
+async function synthOnce(
+  text: string,
+  voice: string
+): Promise<{ buffer: Buffer; durationMs: number }> {
+  const tts = new EdgeTTS(text, voice, {
+    rate: "+0%",
+    volume: "+0%",
+    pitch: "+0Hz",
+  });
+  const result = await withTimeout(
+    tts.synthesize(),
+    TTS_SYNTH_TIMEOUT_MS,
+    `TTS 合成超时（>${TTS_SYNTH_TIMEOUT_MS}ms）`
+  );
+  const buffer = Buffer.from(await result.audio.arrayBuffer());
+  const last = result.subtitle?.[result.subtitle.length - 1];
+  const durationMs = last
+    ? Math.round(((last.offset + last.duration) / 1e7) * 1000)
+    : 0;
+  return { buffer, durationMs };
+}
+
 async function synthToBuffer(
   text: string,
   voice: string
 ): Promise<{ buffer: Buffer; durationMs: number } | null> {
-  try {
-    const tts = new EdgeTTS(text, voice, {
-      rate: "+0%",
-      volume: "+0%",
-      pitch: "+0Hz",
-    });
-    const result = await withTimeout(
-      tts.synthesize(),
-      TTS_SYNTH_TIMEOUT_MS,
-      `TTS 合成超时（>${TTS_SYNTH_TIMEOUT_MS}ms）`
-    );
-    const buffer = Buffer.from(await result.audio.arrayBuffer());
-    const last = result.subtitle?.[result.subtitle.length - 1];
-    const durationMs = last
-      ? Math.round(((last.offset + last.duration) / 1e7) * 1000)
-      : 0;
-    return { buffer, durationMs };
-  } catch (err) {
-    console.error("TTS synthesize failed:", err);
-    return null;
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= TTS_RETRY; attempt++) {
+    try {
+      return await synthOnce(text, voice);
+    } catch (err) {
+      lastErr = err;
+      console.error(
+        `TTS synthesize failed (attempt ${attempt + 1}/${TTS_RETRY + 1}):`,
+        err
+      );
+      // 还有重试次数 → 指数退避后重试；已用尽 → 跳出返回失败。
+      if (attempt < TTS_RETRY) {
+        await sleep(TTS_RETRY_BASE_MS * Math.pow(2, attempt));
+      }
+    }
   }
+  console.error("TTS synthesize 最终失败:", lastErr);
+  return null;
 }
 
 export async function runTtsForStory(
@@ -233,7 +273,7 @@ export async function runTtsForStory(
     for (const lang of langs) {
       const text = lang === "zh" ? item.textZh : item.textEn;
       if (!text || !text.trim()) continue;
-      const voice = pickVoice(item.role, lang, config);
+      const voice = pickVoice(item.role, lang, config, item.speaker);
       const segLabel = item.segmentId != null ? `seg_${item.segmentId}` : "seg_full";
       const fileName = `${segLabel}_${lang}.mp3`;
       // 相对路径以 "assets/" 开头（与 imageStore 约定一致），绝对路径以 DATA_DIR 为基，
@@ -290,6 +330,8 @@ export async function runTtsForStory(
     if (process.env.TTS_MOCK) {
       synth = { buffer: Buffer.alloc(0), durationMs: 800 };
     } else {
+      // 段间限速：连续请求易被微软限流返回空流，合成前留一点间隔降低概率。
+      if (TTS_INTERVAL_MS > 0) await sleep(TTS_INTERVAL_MS);
       synth = await synthToBuffer(job.text, job.voice);
     }
     if (!synth) {
@@ -337,6 +379,13 @@ export async function runTtsForStory(
     now(),
     audioSetId
   );
+  // 层快照：任一 audio_set 曾 completed → 故事标记「已配音」（不区分次数，至少一次）。
+  if (finalStatus === "completed") {
+    db.prepare(`UPDATE stories SET has_audio = 1, updated_at = ? WHERE id = ?`).run(
+      now(),
+      storyId
+    );
+  }
 
   return { ok: done - 0, failed, total };
 }
@@ -471,6 +520,7 @@ export function getBookAudio(
       seq: number;
       role: SegmentRole;
       speaker: string | null;
+      speakerEn: string | null;
       textZh: string;
       textEn: string;
       audioUrls: { zh?: string; en?: string };
@@ -491,7 +541,7 @@ export function getBookAudio(
   for (const page of pages) {
     const segs = db
       .prepare(
-        `SELECT id, seq, role, speaker, text_zh, text_en
+        `SELECT id, seq, role, speaker, speaker_en, text_zh, text_en
          FROM page_segments WHERE page_id = ? ORDER BY seq ASC`
       )
       .all(page.id) as Array<{
@@ -499,6 +549,7 @@ export function getBookAudio(
       seq: number;
       role: string;
       speaker: string | null;
+      speaker_en: string | null;
       text_zh: string;
       text_en: string;
     }>;
@@ -511,6 +562,7 @@ export function getBookAudio(
             seq: 0,
             role: "narration",
             speaker: null,
+            speakerEn: null,
             text_zh: page.text_zh || "",
             text_en: page.text_en || "",
           },
@@ -535,6 +587,7 @@ export function getBookAudio(
           ? s.role
           : "narration") as SegmentRole,
         speaker: s.speaker,
+        speakerEn: s.speaker_en,
         textZh: s.text_zh,
         textEn: s.text_en,
         audioUrls: { zh: audioFor("zh"), en: audioFor("en") },
@@ -546,14 +599,17 @@ export function getBookAudio(
   return { audioSetId, pages: out };
 }
 
-/** 取故事当前选用的配音方案 id（无则首个 completed 的）。 */
+/** 取故事当前选用的配音方案 id（无显式选用时，兜底首个可用方案）。
+ *  可用定义：completed（全成功）或 interrupted（部分成功，仍有音频可播）。
+ *  仅 failed（零音频）/ generating（尚未产出）不参与兜底，避免选中空方案。 */
 export function getSelectedAudioSetId(storyId: number): number | null {
   const story = getStoryRaw(storyId);
   if (story?.selected_audio_set_id) return story.selected_audio_set_id;
   const row = db
     .prepare(
-      `SELECT id FROM audio_sets WHERE story_id = ? AND status = 'completed'
-       ORDER BY id ASC LIMIT 1`
+      `SELECT id FROM audio_sets
+       WHERE story_id = ? AND status IN ('completed', 'interrupted')
+       ORDER BY (status = 'completed') DESC, id ASC LIMIT 1`
     )
     .get(storyId) as { id: number } | undefined;
   return row?.id ?? null;

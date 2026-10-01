@@ -51,10 +51,18 @@ export function registerStoryRoutes(app: FastifyInstance): void {
     }
   });
 
-  // 列表（支持 ?status= 已发布过滤；无参返回全部未删除，兼容管理壳）
+  // 列表（支持过滤：?title= & ?status= & ?generated= & ?audio= & ?hotspots=）
   app.get("/api/stories", async (req) => {
-    const status = (req.query as any)?.status as string | undefined;
-    return { stories: listStories(status) };
+    const q = req.query as any;
+    return {
+      stories: listStories({
+        title: q.title as string | undefined,
+        status: q.status as string | undefined,
+        generated: q.generated as any,
+        audio: q.audio as any,
+        hotspots: q.hotspots as any,
+      }),
+    };
   });
 
   // 该故事进行中的任务（生图/补画/配音等），供前端恢复轮询时一次拉取

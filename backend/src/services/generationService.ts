@@ -5,10 +5,12 @@
 
 import { db, isCancelRequested, markTaskCancelled } from "../db/sqlite";
 import { STORY_STATUS } from "../constants/status";
+import { styleToEnglish } from "../constants/style";
 import {
   getStoryRaw,
   getPagesByStory,
   setStatus,
+  getPublishReadiness,
 } from "./storyService";
 import {
   ensureAnchors,
@@ -694,7 +696,7 @@ export async function runFullGeneration(taskId: number): Promise<void> {
     const pages = getPagesByStory(story.id);
     if (!pages.length) throw new Error("该故事尚无分页，请先执行改写");
 
-    const style = story.style || "whimsical, cute, children's picture-book style";
+    const style = styleToEnglish(story.style);
     const sourceText = story.refined_text || story.original_text;
 
     const { extracted } = await ensureAnchors(
@@ -734,8 +736,16 @@ export async function runFullGeneration(taskId: number): Promise<void> {
       if (!isCancelRequested(taskId)) return false;
       markTaskCancelled(taskId);
       finishRun(run.id, failed > 0 ? "partial_failed" : "completed");
+      // 取消落点按「是否仍有缺图页」判定：全部有图 → 生图完成待发布；否则生图部分失败。
+      // 修复旧逻辑一律置生图部分失败、把正常取消也推入发布死路的问题。
       try {
-        setStatus(story.id, STORY_STATUS.GEN_PARTIAL_FAILED);
+        const readiness = getPublishReadiness(story.id);
+        setStatus(
+          story.id,
+          readiness.images.length === 0
+            ? STORY_STATUS.GEN_DONE
+            : STORY_STATUS.GEN_PARTIAL_FAILED
+        );
       } catch {
         /* 状态机冲突忽略 */
       }
@@ -839,7 +849,7 @@ export async function runSinglePage(taskId: number): Promise<void> {
   setTaskStatus(taskId, "running");
 
   try {
-    const style = story.style || "whimsical, cute, children's picture-book style";
+    const style = styleToEnglish(story.style);
     const sourceText = story.refined_text || story.original_text;
     const { extracted } = await ensureAnchors(
       story.id,
@@ -871,7 +881,8 @@ export async function runSinglePage(taskId: number): Promise<void> {
     }));
     const idx = pages.findIndex((p) => p.id === pageId);
 
-    // 单页补画：不翻默认（flipDefault=false），仅追加候选
+    // 单页补画：flipDefault=false 仅追加候选；但若该页当前无默认图（缺图页补画），
+    // 则把新候选翻为默认，使发布门禁判为已补全（补画缺失页应直接生效，而非只留候选）。
     const r = await runFrameLoop(
       page,
       idx >= 0 ? idx : 0,
@@ -879,7 +890,27 @@ export async function runSinglePage(taskId: number): Promise<void> {
       ctx,
       false
     );
-    // 单页补画不改变 run 与故事状态：只是给当前版本追加候选
+    if (r.bestRowId != null) {
+      const hasDef = db
+        .prepare(
+          `SELECT 1 AS ok FROM page_images WHERE page_id = ? AND generation_run_id = ? AND is_default = 1 LIMIT 1`
+        )
+        .get(pageId, run.id);
+      if (!hasDef) setDefaultImageForPage(pageId, r.bestRowId);
+
+      // 晋级：若故事处于「生图部分失败」且补画后全本已无缺图页，推进到「生图完成待发布」。
+      // 修复「生图部分失败」是发布死路（P1）：补满缺图页即可发布。
+      if (story.status === STORY_STATUS.GEN_PARTIAL_FAILED) {
+        const readiness = getPublishReadiness(story.id);
+        if (readiness.images.length === 0) {
+          try {
+            setStatus(story.id, STORY_STATUS.GEN_DONE);
+          } catch {
+            /* 状态机冲突忽略 */
+          }
+        }
+      }
+    }
     finishTask(
       taskId,
       r.bestRowId != null ? "completed" : "failed",
@@ -929,6 +960,13 @@ export async function runTtsGeneration(taskId: number): Promise<void> {
         now(),
         audioSetId
       );
+      // 层快照：completed 即标记故事「已配音」。
+      if (status === "completed") {
+        db.prepare(`UPDATE stories SET has_audio = 1, updated_at = ? WHERE id = ?`).run(
+          now(),
+          storyId
+        );
+      }
     }
     finishTask(taskId, "completed", failed > 0 ? `${failed} 段合成失败` : null);
   } catch (err: any) {

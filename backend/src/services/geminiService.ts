@@ -217,6 +217,7 @@ export interface PageSegment {
   seq: number;
   role: SegmentRole;
   speaker?: string;
+  speakerEn?: string;
   textZh: string;
   textEn: string;
 }
@@ -257,10 +258,16 @@ For each page, you must provide:
 - "segments": an array of structured text segments for THIS page, split by what should be read aloud separately. Each segment has:
   - "seq": 1-based order within the page
   - "role": one of "narration" (storytelling), "dialogue" (a character speaking), "background" (ambient/soundscape description), "sfx" (a sound effect)
-  - "speaker": the character name when role="dialogue", otherwise omit or empty
+  - "speaker": the character name (Chinese) when role="dialogue", otherwise omit or empty
+  - "speakerEn": the English name of the same character when role="dialogue" (e.g. "Little Rabbit"), used for English display; otherwise omit or empty
   - "textEn": the English text of this segment (should be a substring/equivalent of the page's "textEn")
   - "textZh": the 简体中文 text of this segment (equivalent to textEn, just Chinese)
   Combine consecutive narration into one segment; put each spoken line in its own dialogue segment.
+
+CRITICAL RULES for segments (must be followed exactly):
+  - For role="dialogue": "textZh"/"textEn" MUST contain ONLY the spoken words — NEVER include the speaker prefix such as "小兔子说：" / "小兔子：" / "The little rabbit said:". Put the character name in "speaker" instead. The spoken line is what gets displayed in a speech bubble and read aloud by TTS; the speaker is shown separately by the app.
+  - For role="background" / "sfx": these are NOT spoken lines. "textZh"/"textEn" should describe the ambiance or sound in third person (e.g. "夜晚的虫鸣" / "sound of crickets at night"), and will NOT be read aloud. Do NOT phrase them as something a character says, and do NOT put a name in "speaker".
+  - "textZh"/"textEn" must stay semantically equivalent (same language pair as the page).
 
 IMPORTANT: "text", "textEn", "textZh", and the concatenation of "segments[].textEn/textZh" MUST describe the SAME story beat for the page. Keep them semantically equivalent (just different languages). "text" and "textEn" should be identical English. Segments must cover the whole page text without duplication or omission.
 
@@ -342,7 +349,12 @@ For each page, output pageNumber, text (English), textEn (English, same as text)
                       speaker: {
                         type: Type.STRING,
                         description:
-                          "Character name when role='dialogue'; otherwise omit/empty.",
+                          "Character name when role='dialogue' (e.g. '小兔子'). MUST be empty for narration/background/sfx. The spoken line goes in textZh/textEn WITHOUT any 'X说：' prefix.",
+                      },
+                      speakerEn: {
+                        type: Type.STRING,
+                        description:
+                          "English character name when role='dialogue' (e.g. 'Little Rabbit'). Empty for narration/background/sfx. The spoken line goes in textZh/textEn WITHOUT any speaker prefix.",
                       },
                       textEn: {
                         type: Type.STRING,
@@ -386,6 +398,7 @@ For each page, output pageNumber, text (English), textEn (English, same as text)
             ? s.role
             : "narration") as SegmentRole,
           speaker: s.speaker ? String(s.speaker) : undefined,
+          speakerEn: s.speakerEn ? String(s.speakerEn) : undefined,
           textZh: String(s.textZh ?? ""),
           textEn: String(s.textEn ?? ""),
         })

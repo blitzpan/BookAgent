@@ -16,8 +16,10 @@ export interface Story {
   rewrite_result: string | null; // JSON
   inspiration_image_path: string | null;
   generation_config: string | null; // JSON 生图参数
-  current_run_id: number | null; // 当前生效版本
+  current_run_id: number | null; // 当前生效版本（亦作「是否生过图」层快照）
   selected_audio_set_id: number | null; // 当前选用配音方案
+  has_audio: number | null; // 层快照：任一 audio_set 曾 completed → 1（不区分次数）
+  has_hotspots: number | null; // 层快照：任一热区行存在过 → 1（改写清空热区时归 0）
   cover_url: string | null; // 当前生效版本第 1 页默认图（接口层计算填充）
   created_at: string | null;
   updated_at: string | null;

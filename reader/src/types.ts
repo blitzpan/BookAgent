@@ -19,6 +19,7 @@ export interface ReaderSegment {
   seq: number;
   role: "narration" | "dialogue" | "background" | "sfx";
   speaker: string | null;
+  speakerEn: string | null;
   textZh: string;
   textEn: string;
   /** 各语言音频 URL（已拼 API_BASE）；无则 undefined */

@@ -208,6 +208,24 @@ export async function initDb(): Promise<void> {
     /* 列已存在或无需添加，忽略 */
   }
 
+  // 开发阶段迁移：stories 新增两个「层快照」标志位（配音/热区是否曾产出）。
+  try {
+    db.exec(`ALTER TABLE stories ADD COLUMN has_audio INTEGER DEFAULT 0`);
+  } catch {
+    /* 列已存在或无需添加，忽略 */
+  }
+  try {
+    db.exec(`ALTER TABLE stories ADD COLUMN has_hotspots INTEGER DEFAULT 0`);
+  } catch {
+    /* 列已存在或无需添加，忽略 */
+  }
+  // 开发阶段迁移：page_segments 新增 speaker_en 列（英文说话人，英文语境显示用）
+  try {
+    db.exec(`ALTER TABLE page_segments ADD COLUMN speaker_en TEXT`);
+  } catch {
+    /* 列已存在或无需添加，忽略 */
+  }
+
   persist();
   initialized = true;
 }

@@ -1,5 +1,6 @@
 import type {
   StorySummary,
+  StoryListFilter,
   Story,
   StoryAudioState,
   Page,
@@ -43,7 +44,16 @@ export function assetUrl(rel?: string | null): string | null {
 }
 
 export const api = {
-  listStories: () => request<{ stories: StorySummary[] }>('GET', '/api/stories'),
+  listStories: (filter?: StoryListFilter) => {
+    const qs = new URLSearchParams();
+    if (filter?.title) qs.set('title', filter.title);
+    if (filter?.status) qs.set('status', filter.status);
+    if (filter?.generated && filter.generated !== 'all') qs.set('generated', filter.generated);
+    if (filter?.audio && filter.audio !== 'all') qs.set('audio', filter.audio);
+    if (filter?.hotspots && filter.hotspots !== 'all') qs.set('hotspots', filter.hotspots);
+    const q = qs.toString();
+    return request<{ stories: StorySummary[] }>('GET', `/api/stories${q ? `?${q}` : ''}`);
+  },
   createStory: (input: {
     original_text: string;
     style?: string;
@@ -105,8 +115,11 @@ export const api = {
     ),
   setDefaultImage: (imageId: number) =>
     request<{ ok: true }>('PATCH', `/api/page-images/${imageId}`),
-  publish: (id: number) =>
-    request<{ ok: true; status: string }>('POST', `/api/stories/${id}/publish`),
+  publish: (id: number, force = false) =>
+    request<{ ok: true; status: string; missing?: unknown }>(
+      'POST',
+      `/api/stories/${id}/publish${force ? '?force=1' : ''}`
+    ),
   deleteStory: (id: number) =>
     request<{ ok: true }>('DELETE', `/api/stories/${id}`),
   // ===== 配音（TTS）：独立接口，与生图完全解耦 =====

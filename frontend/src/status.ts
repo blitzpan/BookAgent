@@ -10,12 +10,10 @@ export function storyStatusColor(status: string): string {
       return 'bg-[#f6e6c8] text-[#8a5a1e]';
     case '生图中':
       return 'bg-[#f6dccd] text-[#9c4a2c]';
-    case '生图完成待审批':
+    case '生图完成待发布':
       return 'bg-[#f6e6c8] text-[#8a5a1e]';
     case '生图部分失败':
       return 'bg-[#f3d9d3] text-[#9c3b30]';
-    case '待审批发行':
-      return 'bg-[#dfe7d5] text-[#3f5a35]';
     case '审批通过的作品':
       return 'bg-[#dfe7d5] text-[#3f5a35]';
     default:

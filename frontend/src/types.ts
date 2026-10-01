@@ -17,13 +17,26 @@ export interface StorySummary {
   status: string;
   page_count: number;
   created_at: string | null;
+  updated_at: string | null;
   // 当前生效版本第 1 页默认图地址（已拼 /assets/ 前缀）；无图时为 null。
   cover_url: string | null;
-  // 配音三态聚合：isGenerating → 配音中；hasAudio → 已配音；否则未配音
-  isGenerating: boolean;
-  hasAudio: boolean;
+  // 是否生过图（current_run_id 非空）
+  currentRunId: number | null;
+  // 热区层快照：是否曾配置过热区（不区分次数，至少一次）
+  hasHotspots: number | null;
+  // 配音派生：isGenerating → 配音中；hasAudioDone → 已有一组 completed；audioSetCount → 配音方案总数
+  isGenerating: number;
+  hasAudioDone: number;
   audioSetCount: number;
   selectedAudioSetId: number | null;
+}
+
+export interface StoryListFilter {
+  title?: string;
+  status?: string;
+  generated?: "all" | "done" | "none" | "partial";
+  audio?: "all" | "done" | "none" | "generating" | "interrupted";
+  hotspots?: "all" | "done" | "none";
 }
 
 export type AudioSetStatus = 'pending' | 'generating' | 'completed' | 'interrupted' | 'failed';
@@ -79,6 +92,8 @@ export interface Story {
   generation_config: GenerationConfig | null;
   current_run_id: number | null;
   selected_audio_set_id: number | null;
+  has_audio: number | null; // 层快照：是否曾生成配音（不区分次数，至少一次）
+  has_hotspots: number | null; // 层快照：是否曾配置热区
   cover_url: string | null;
   created_at: string | null;
   updated_at: string | null;

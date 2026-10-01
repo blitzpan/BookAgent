@@ -108,6 +108,11 @@ export function createHotspot(
       now(),
       now()
     );
+  // 层快照：任一热区存在即标记故事「已配置热区」（不区分次数，至少一次）。
+  db.prepare(`UPDATE stories SET has_hotspots = 1, updated_at = ? WHERE id = ?`).run(
+    now(),
+    storyId
+  );
   return db
     .prepare(`SELECT * FROM page_hotspots WHERE id = ?`)
     .get(Number(info.lastInsertRowid)) as HotspotRow;
@@ -241,6 +246,26 @@ export function savePageHotspots(
       created += 1;
     }
 
+    // 层快照：有新增则置 1；若本次删空了全部热区则归 0（createHotspot 已会置 1，这里仅处理删空情形）。
+    if (created > 0) {
+      db.prepare(`UPDATE stories SET has_hotspots = 1, updated_at = ? WHERE id = ?`).run(
+        now(),
+        storyId
+      );
+    } else if (deleted > 0) {
+      const remain = (
+        db.prepare(`SELECT COUNT(*) AS n FROM page_hotspots WHERE story_id = ?`).get(storyId) as {
+          n: number;
+        }
+      ).n;
+      if (remain === 0) {
+        db.prepare(`UPDATE stories SET has_hotspots = 0, updated_at = ? WHERE id = ?`).run(
+          now(),
+          storyId
+        );
+      }
+    }
+
     return { created, updated, deleted };
   });
 
@@ -260,9 +285,9 @@ function getDefaultImagePath(pageId: number): string | null {
 function getSegmentsForPage(pageId: number) {
   return db
     .prepare(
-      `SELECT seq, text_zh, text_en FROM page_segments WHERE page_id = ? ORDER BY seq ASC`
+      `SELECT seq, text_zh, text_en, speaker, speaker_en FROM page_segments WHERE page_id = ? ORDER BY seq ASC`
     )
-    .all(pageId) as Array<{ seq: number; text_zh: string; text_en: string }>;
+    .all(pageId) as Array<{ seq: number; text_zh: string; text_en: string; speaker: string | null; speaker_en: string | null }>;
 }
 
 export interface AutoHotspotOptions {
@@ -369,6 +394,13 @@ export async function autoGenerateHotspots(
     tick();
   }
 
+  // 层快照：成功放置过热区即标记「已配置热区」。
+  if (placed > 0) {
+    db.prepare(`UPDATE stories SET has_hotspots = 1, updated_at = ? WHERE id = ?`).run(
+      now(),
+      storyId
+    );
+  }
   return { placed, pages: pages.length, skipped, failed };
 }
 
@@ -386,6 +418,8 @@ export interface HotspotEditorSegment {
   seq: number;
   textZh: string;
   textEn: string;
+  speaker?: string | null;
+  speakerEn?: string | null;
   audioUrls: { zh?: string; en?: string };
 }
 export interface HotspotEditorPage {
@@ -416,12 +450,16 @@ export function getHotspotEditorData(
           seq: s.seq,
           textZh: s.textZh,
           textEn: s.textEn,
+          speaker: s.speaker,
+          speakerEn: s.speakerEn ?? null,
           audioUrls: s.audioUrls,
         }))
       : getSegmentsForPage(page.id).map((s) => ({
           seq: s.seq,
           textZh: s.text_zh,
           textEn: s.text_en,
+          speaker: s.speaker,
+          speakerEn: s.speaker_en ?? null,
           audioUrls: {},
         }));
     return { pageNumber: page.page_number, imagePath, segments };

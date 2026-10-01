@@ -40,7 +40,7 @@ describe("发布前的资产完整性闸门", () => {
     await pollTask(g.json().taskId);
 
     const detail = (await app.inject({ method: "GET", url: `/api/stories/${storyId}` })).json();
-    expect(detail.story.status).toBe("生图完成待审批");
+    expect(detail.story.status).toBe("生图完成待发布");
     return {
       storyId,
       pageNumbers: detail.pages.map((p: any) => p.page_number as number),
@@ -71,7 +71,7 @@ describe("发布前的资产完整性闸门", () => {
 
     // 被拒绝后状态不应改变
     const after = (await app.inject({ method: "GET", url: `/api/stories/${storyId}` })).json();
-    expect(after.story.status).toBe("生图完成待审批");
+    expect(after.story.status).toBe("生图完成待发布");
   });
 
   it("缺中英文本的页被拒绝发布（空字符串按缺失处理）", async () => {
@@ -102,8 +102,10 @@ describe("发布前的资产完整性闸门", () => {
     expect(res.json().missing.hotspots.length).toBe(pageNumbers.length);
   });
 
-  it("「生图部分失败」不允许直接发行，必须先补跑", () => {
-    expect(canTransitionStory("生图部分失败", "待审批发行")).toBe(false);
+  it("「生图部分失败」可补满晋级或带缺图发布", () => {
+    // 补满缺图页 → 生图完成待发布；人工确认 → 审批通过的作品；整书重跑 → 生图中
+    expect(canTransitionStory("生图部分失败", "生图完成待发布")).toBe(true);
+    expect(canTransitionStory("生图部分失败", "审批通过的作品")).toBe(true);
     expect(canTransitionStory("生图部分失败", "生图中")).toBe(true);
   });
 });

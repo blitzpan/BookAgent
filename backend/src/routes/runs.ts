@@ -158,8 +158,9 @@ export function registerRunRoutes(app: FastifyInstance): void {
     return { ok: true };
   });
 
-  // 发布：生图完成待审批 →（桥接 待审批发行）→ 审批通过的作品
-  // 两步迁移均经 canTransitionStory 校验，最终落到已发布态（MVP 单人场景一步到位）。
+  // 发布：发布前可随时发布（hasGenerated = current_run_id 非空即「生过图」），仅冻结后不可。
+  // 图与文本是硬门禁（缺则默认拒绝，避免阅读端空白页）；配音与热区是软提示（允许纯图文绘本）。
+  // 硬门禁可被 ?force=1 人工覆盖（防止程序把人困住：出了问题仍能带缺图发布，由人确认）。
   app.post("/api/stories/:id/publish", async (req, reply) => {
     const id = Number((req.params as any).id);
     if (!Number.isInteger(id)) {
@@ -167,13 +168,15 @@ export function registerRunRoutes(app: FastifyInstance): void {
     }
     const story = getStoryRaw(id);
     if (!story) return reply.code(404).send({ error: "故事不存在" });
-    if (story.status !== STORY_STATUS.GEN_DONE) {
-      return reply
-        .code(409)
-        .send({ error: `当前状态(${story.status})不可发布，需为「生图完成待审批」` });
+    // 入口判据：必须生过图（current_run_id 非空）。未生图的书不能发布。
+    if (story.current_run_id == null) {
+      return reply.code(409).send({ error: "尚未生图，请先生成插图后再发布" });
     }
-    // 资产完整性闸门：图与文本是硬门禁（缺则拒绝发布，阅读端会出现空白页）；
-    // 配音与热区是软提示（允许纯图文绘本发布，热区可由 AI 合法跳过）。
+
+    const force =
+      (req.query as any)?.force === "1" || (req.body as any)?.force === true;
+
+    // 资产完整性闸门：图与文本缺则默认拒绝（阅读端会出现空白页）；配音/热区仅软提示。
     const readiness = getPublishReadiness(id);
     const blocked: string[] = [];
     if (readiness.images.length > 0) {
@@ -182,18 +185,18 @@ export function registerRunRoutes(app: FastifyInstance): void {
     if (readiness.texts.length > 0) {
       blocked.push(`第 ${readiness.texts.join("、")} 页缺少中英文本`);
     }
-    if (blocked.length > 0) {
+    if (blocked.length > 0 && !force) {
       return reply
         .code(409)
         .send({ error: `不可发布：${blocked.join("；")}`, missing: readiness });
     }
 
     try {
-      setStatus(id, STORY_STATUS.PENDING_PUBLISH);
+      // 单次迁移直接落到已发布态（MVP 单人场景，无独立审批态）。
       setStatus(id, STORY_STATUS.PUBLISHED);
     } catch (err: any) {
       return reply.code(409).send({ error: err?.message ?? String(err) });
     }
-    return { ok: true, status: STORY_STATUS.PUBLISHED, missing: readiness };
+    return { ok: true, status: STORY_STATUS.PUBLISHED, missing: readiness, force: !!force };
   });
 }

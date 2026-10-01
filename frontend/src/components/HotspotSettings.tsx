@@ -6,6 +6,8 @@ interface EditorSegment {
   seq: number;
   textZh: string;
   textEn: string;
+  speaker?: string | null;
+  speakerEn?: string | null;
   audioUrls: { zh?: string; en?: string };
 }
 interface EditorPage {
@@ -263,27 +265,6 @@ const HotspotSettings: React.FC<Props> = ({ storyId, onBack }) => {
     markDirty(h.pageNumber);
   };
 
-  // 把右侧分段卡片「放到图上」：在页中心新建热区并选中，再交给键盘微调（替代拖拽主路径）
-  const placeSegmentOnImage = (seg: EditorSegment) => {
-    if (!page) return;
-    const label = `${seg.textZh}\n${seg.textEn}`;
-    const nh: LocalHotspot = {
-      lid: nextLid(),
-      id: null,
-      pageNumber: page.pageNumber,
-      segment_seq: seg.seq,
-      x: 0.5,
-      y: 0.5,
-      kind: 'audio',
-      label,
-      source: 'manual',
-      confidence: 1,
-    };
-    setHotspots((prev) => [...prev, nh]);
-    setSelectedLid(nh.lid);
-    markDirty(page.pageNumber);
-  };
-
   // 只提交本页的变更项：新增（无 id）/ 与快照有差异 / 删除，后端一个事务完成
   const persist = useCallback(
     async (pageNumber: number) => {
@@ -359,6 +340,18 @@ const HotspotSettings: React.FC<Props> = ({ storyId, onBack }) => {
     setDirtyPages(new Set());
   };
 
+  // 保存本页后自动跳到下一页（末页则不跳并提示），方便连续录入热区。
+  const handleSaveAndNext = async () => {
+    const cur = pages[pageIdx];
+    if (!cur) return;
+    await persist(cur.pageNumber);
+    if (pageIdx < pages.length - 1) {
+      setPageIdx(pageIdx + 1);
+    } else {
+      setMsg((m) => (m ? `${m}（已是最后一页）` : "已是最后一页"));
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
@@ -388,6 +381,13 @@ const HotspotSettings: React.FC<Props> = ({ storyId, onBack }) => {
             className="px-4 py-2 rounded-lg bg-brand text-white disabled:opacity-50"
           >
             保存本页
+          </button>
+          <button
+            onClick={handleSaveAndNext}
+            disabled={busy}
+            className="px-4 py-2 rounded-lg bg-brand text-white disabled:opacity-50"
+          >
+            保存并下一页
           </button>
           <button
             onClick={handleRefresh}
@@ -539,7 +539,7 @@ const HotspotSettings: React.FC<Props> = ({ storyId, onBack }) => {
               </div>
             </div>
             <p className="mt-2 text-xs text-gray-500">
-              从右侧把文案拖到图上即可生成热区（落点为热区中心）；拖动热区可微调位置，点击可选中（× 删除）。改动需点「保存本页」才入库。
+              从右侧把文案拖到图上即可生成热区（落点为热区中心）；拖动热区可微调位置，点击可选中，在右侧列表点「删除」移除。改动需点「保存本页」才入库。
             </p>
           </div>
 
@@ -562,8 +562,15 @@ const HotspotSettings: React.FC<Props> = ({ storyId, onBack }) => {
                 className="group rounded-lg border border-gold/40 bg-gold-soft p-3 cursor-grab active:cursor-grabbing hover:border-violet-400"
               >
                 <div className="text-sm">
-                  <div className="text-gray-800 dark:text-gray-100">{s.textZh}</div>
-                  <div className="text-gray-500">{s.textEn}</div>
+                  {/* off-image 分段面板：显示说话人前缀（图外触发，需指明谁说）；
+                      图上的热区标签 h.label 为纯台词，不加前缀。
+                      中文用 speaker，英文用 speakerEn（与阅读端一致）。 */}
+                  <div className="text-gray-800 dark:text-gray-100">
+                    {s.speaker ? `${s.speaker}：${s.textZh}` : s.textZh}
+                  </div>
+                  <div className="text-gray-500">
+                    {s.speakerEn ? `${s.speakerEn}: ${s.textEn}` : s.textEn}
+                  </div>
                 </div>
                 <div className="mt-2 flex items-center gap-2">
                   <button
@@ -579,13 +586,6 @@ const HotspotSettings: React.FC<Props> = ({ storyId, onBack }) => {
                     className="px-2 py-1 rounded-md bg-brand text-white text-xs disabled:opacity-40"
                   >
                     ▶ 播放英文
-                  </button>
-                  <button
-                    onClick={() => placeSegmentOnImage(s)}
-                    title="在本页中心新建热区并选中，随后可用方向键微调位置"
-                    className="px-2 py-1 rounded-md bg-emerald-600 text-white text-xs"
-                  >
-                    ＋ 放到图上
                   </button>
                   <span className="text-[11px] text-gray-400">seq #{s.seq}</span>
                 </div>

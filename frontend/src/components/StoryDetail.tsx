@@ -12,6 +12,7 @@ import type {
 } from '../types';
 import { storyStatusColor, runStatusColor } from '../status';
 import StoryConfigPanel from './StoryConfigPanel';
+import Modal from './Modal';
 import { AudioPlanModal } from './AudioPlanModal';
 import { DEFAULT_GENERATION_CONFIG } from '../constants';
 import PageCard from './PageCard';
@@ -128,6 +129,8 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
   const [listen, setListen] = useState<{ id: number; name: string } | null>(null);
   // 当前选用方案的逐页音频（用于 PageCard 徽标试听）：pageNumber -> {zh[], en[]}
   const [audioByPage, setAudioByPage] = useState<Record<number, { zh: string[]; en: string[] }>>({});
+  // 标题旁刷新图标按钮的加载态
+  const [refreshing, setRefreshing] = useState(false);
 
   const loadDetail = useCallback(async () => {
     const d = await api.getStory(storyId);
@@ -160,11 +163,14 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
 
   const refresh = useCallback(async () => {
     setError(null);
+    setRefreshing(true);
     try {
       await Promise.all([loadDetail(), loadRuns(), loadAudio()]);
       if (activeRunId != null) await loadRunDetail(activeRunId);
     } catch (e: any) {
       setError(e?.message ?? String(e));
+    } finally {
+      setRefreshing(false);
     }
   }, [loadDetail, loadRuns, loadRunDetail, loadAudio, activeRunId]);
 
@@ -329,7 +335,7 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
   // 推倒重来走独立的「全部重新生成」按钮（显式 regenerate=true + 二次确认）。
   const aiButtonText =
     aiState === 'running'
-      ? 'AI 生成中…'
+      ? 'AI 生成热区中…'
       : aiState === 'resumable'
         ? '↻ 继续生成热区'
         : aiState === 'done'
@@ -343,28 +349,6 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
         : aiState === 'done'
           ? '在已有基础上继续：只补还没有热区的页，已生成与人工微调都保留'
           : '调用 AI 为每页各分段自动定位热区';
-
-  // 推倒重来：清除全部 AI 热区并重新定位（人工微调保留）。会按页数真实调用视觉模型，故二次确认
-  const regenerateAllHotspots = async () => {
-    if (
-      !confirm(
-        `将清除全部 AI 生成的热区并重新定位，约 ${pages.length} 次视觉模型调用（人工微调的热区会保留）。确定继续？`
-      )
-    )
-      return;
-    setBusyAi(true);
-    setError(null);
-    try {
-      const { taskId } = await api.autoGenerateHotspots(storyId, true);
-      const { task } = await api.getTask(taskId);
-      setAiTask(task);
-      setMessage(`已创建热区重生成任务 #${taskId}，后台逐页生成中…`);
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
-    } finally {
-      setBusyAi(false);
-    }
-  };
 
   // 轮询热区任务进度（统一用 useTaskPolling）
   useTaskPolling(
@@ -474,7 +458,18 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
     setBusy(true);
     setError(null);
     try {
-      await api.publish(storyId);
+      // 资产不完整时由人工确认后带缺图发布（?force=1），避免程序把人困住。
+      const force = blockedReasons.length > 0;
+      if (
+        force &&
+        !window.confirm(
+          `仍有缺图/缺文页：${blockedReasons.join('；')}\n确认仍要发布？`
+        )
+      ) {
+        setBusy(false);
+        return;
+      }
+      await api.publish(storyId, force);
       setMessage('已审批通过并发布。');
       await loadDetail();
       onChanged();
@@ -562,21 +557,30 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
 
   if (!detail) return <p className="text-gray-500">加载中…</p>;
   const { story, pages } = detail;
-  // 生图按钮可用性：只有「改写完成待生图」可首次生图；「生图部分失败」可续跑同一版本
-  const canGenerate = story.status === '改写完成待生图';
-  const canResume = story.status === '生图部分失败';
+  // 发布前可任意操作：按钮由「是否做过该操作 + 是否发布」驱动，不按精确状态卡死（人工可越级）。
+  const published = story.status === '审批通过的作品';
+  const hasGenerated = story.current_run_id != null; // 是否生过图（层快照）
+  const hasPages = (pages?.length ?? 0) > 0;
   const isGenerating =
     story.status === '生图中' || (task != null && ['queued', 'running'].includes(task.status));
+  const canRewrite = !published && !isGenerating; // 改写：发布前、非生图中
+  const canGenerate = !published && hasPages && !isGenerating; // 生图：首次建版本 / 之后均为续跑（复用当前版本，只补缺失页）
+  const generateLabel = !hasGenerated ? '开始生图' : '续跑生图';
+  const canRepaint = !published && hasGenerated && !isGenerating; // 单页补画
+  const canTts = !published; // 配音：发布前即可（非必须）
+  const canHotspot = !published && hasGenerated; // 热区：需默认图
   const genCfg = story.generation_config ?? DEFAULT_GENERATION_CONFIG;
   const taskProgress = task?.progress ? JSON.parse(task.progress) : null;
-  const estimateCalls =
-    (pages.length || 0) * genCfg.initial_retry_budget * (1 + genCfg.max_sequence_retry);
 
   // 发布检查：图与文本是硬门禁（缺则后端 409 拒绝），配音与热区是软提示
   const readiness = detail?.readiness ?? null;
   const missingImages = readiness?.images ?? [];
   const missingTexts = readiness?.texts ?? [];
   const missingHotspots = readiness?.hotspots ?? [];
+  // 续跑只补缺失页：预估调用量按缺失图页数估算（首跑按全本页数）
+  const genPageCount = !hasGenerated ? (pages.length || 0) : missingImages.length;
+  const estimateCalls =
+    genPageCount * genCfg.initial_retry_budget * (1 + genCfg.max_sequence_retry);
   const blockedReasons: string[] = [];
   if (missingImages.length > 0)
     blockedReasons.push(`第 ${missingImages.join('、')} 页缺插图`);
@@ -588,17 +592,43 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-3">
         <h2 className="text-2xl font-bold">{story.user_title || `故事 #${story.id}`}</h2>
+        <button
+          onClick={refresh}
+          disabled={refreshing}
+          title="刷新：重新从服务端拉取本故事最新状态"
+          className="p-1.5 rounded-md text-muted hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`}
+          >
+            <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+            <polyline points="21 3 21 9 15 9" />
+          </svg>
+        </button>
         <span
           className={`text-sm px-2 py-1 rounded-full ${storyStatusColor(story.status)}`}
         >
           {story.status}
         </span>
+        {/* 层快照徽标：一眼看出是否配音 / 是否配置过热区（不区分次数，至少一次） */}
+        {story.has_audio ? (
+          <span className="text-xs px-2 py-0.5 rounded-full bg-[#f6e6c8] text-[#8a5a1e]">已配音</span>
+        ) : null}
+        {story.has_hotspots ? (
+          <span className="text-xs px-2 py-0.5 rounded-full bg-[#e7eefb] text-[#36507a]">已配热区</span>
+        ) : null}
       </div>
 
       <div className="flex flex-wrap gap-2">
         <button
-          disabled={busy || isGenerating}
-          title={isGenerating ? '生图进行中，暂不可改写' : undefined}
+          disabled={busy || !canRewrite}
+          title={published ? '已发布，冻结不可改写' : isGenerating ? '生图进行中，暂不可改写' : undefined}
           onClick={handleRewrite}
           className="px-4 py-2 rounded-lg bg-brand text-white disabled:opacity-50"
         >
@@ -606,66 +636,59 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
         </button>
         <button
           disabled={busy}
-          onClick={() => setShowCfg((v) => !v)}
+          onClick={() => setShowCfg(true)}
           className="px-4 py-2 rounded-lg bg-stone-600 text-white hover:bg-stone-700 disabled:opacity-50"
         >
-          {showCfg ? '收起故事配置' : '故事配置'}
+          故事配置
         </button>
-        {canGenerate ? (
+        {!published ? (
           <button
-            disabled={busy || isGenerating}
+            disabled={busy || !canGenerate}
+            title={
+              !hasPages
+                ? '请先改写生成分页'
+                : isGenerating
+                ? '生图进行中'
+                : undefined
+            }
             onClick={() => setConfirmGen(true)}
             className="px-4 py-2 rounded-lg bg-brand text-white disabled:opacity-50"
           >
-            开始生图
-          </button>
-        ) : canResume ? (
-          <button
-            disabled={busy || isGenerating}
-            onClick={() => setConfirmGen(true)}
-            className="px-4 py-2 rounded-lg bg-gold text-ink disabled:opacity-50"
-          >
-            继续生图（只补失败页）
+            {generateLabel}
           </button>
         ) : (
           <button
             disabled
-            title="已完成生成即冻结；如需重做请删除该故事重建"
+            title="已发布，冻结不可重做"
             className="px-4 py-2 rounded-lg bg-gray-300 dark:bg-gray-600 text-gray-600 dark:text-gray-300 cursor-not-allowed"
           >
-            {isGenerating ? '生图中…' : '生图（已生成，不可重跑）'}
+            生图（已发布冻结）
           </button>
         )}
-        {story.status === '生图完成待审批' && (
+        {hasGenerated && !published && (
           <button
-            disabled={busy || isGenerating || publishBlocked}
+            disabled={busy || isGenerating}
             title={
-              publishBlocked ? `不可发布：${blockedReasons.join('；')}` : undefined
+              publishBlocked ? `仍缺：${blockedReasons.join('；')}（点击将确认带缺图发布）` : undefined
             }
             onClick={handlePublish}
             className="px-4 py-2 rounded-lg bg-sage text-white disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            审批发布
+            发布
           </button>
         )}
+        {/* 配音（TTS）：独立按钮，暖金区别于生图赤陶；非必须，发布前可多次生成对比 */}
         <button
-          onClick={refresh}
-          className="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700"
-        >
-          刷新
-        </button>
-        {/* 配音（TTS）：独立按钮，暖金区别于生图赤陶 */}
-        <button
-          disabled={busyTts || isGeneratingTts}
+          disabled={busyTts || isGeneratingTts || !canTts}
           onClick={() => setConfirmTtsOpen(true)}
           title="始终新建一组配音方案（用于多组对比试听）"
           className="px-4 py-2 rounded-lg bg-[#f6e6c8] text-[#8a5a1e] hover:bg-[#efd9ad] disabled:opacity-50 disabled:cursor-not-allowed"
         >
           ＋ 新建配音
         </button>
-        {/* 热区：单按钮，按任务状态切换文案与动作（后台异步任务） */}
+        {/* 热区：单按钮，按任务状态切换文案与动作（后台异步任务）；需默认图，发布前可用 */}
         <button
-          disabled={busyAi || aiState === 'running'}
+          disabled={busyAi || aiState === 'running' || !canHotspot}
           onClick={aiState === 'resumable' ? resumeAiHotspots : startAiHotspots}
           title={aiButtonTitle}
           className={`px-4 py-2 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed ${
@@ -676,29 +699,19 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
         >
           {aiButtonText}
         </button>
-        {aiState === 'running' && aiTask && (
-          <button
-            onClick={() => handleCancelTask(aiTask.id)}
-            className="px-3 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 text-xs"
-          >
-            取消
-          </button>
-        )}
-        {aiState !== 'running' && (
-          <button
-            disabled={busyAi}
-            onClick={regenerateAllHotspots}
-            title="清除全部 AI 热区并重新定位（人工微调保留），会按页数重新调用视觉模型"
-            className="px-3 py-2 rounded-lg bg-gold-soft text-ink hover:bg-gold/70 text-xs disabled:opacity-50"
-          >
-            全部重新生成
-          </button>
-        )}
         <button
           onClick={() => onOpenHotspots(storyId)}
+          title={
+            readiness && readiness.pages > 0
+              ? `热区已覆盖 ${readiness.pages - missingHotspots.length}/${readiness.pages} 页，点击打开热区设置`
+              : '点击打开热区设置'
+          }
           className="px-4 py-2 rounded-lg bg-brand text-white hover:bg-brand-strong"
         >
           热区设置
+          {readiness && readiness.pages > 0
+            ? ` (${readiness.pages - missingHotspots.length}/${readiness.pages})`
+            : ''}
         </button>
         <button
           onClick={() => {
@@ -710,19 +723,8 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
           title="在阅读端打开这本书，用于验证热区与音频效果"
           className="px-4 py-2 rounded-lg bg-brand text-white hover:bg-brand-strong"
         >
-          🔗 在阅读器中预览
+          预览
         </button>
-        {readiness && readiness.pages > 0 && (
-          <span
-            className={
-              missingHotspots.length === 0
-                ? 'text-xs text-sage'
-                : 'text-xs text-gold'
-            }
-          >
-            已覆盖 {readiness.pages - missingHotspots.length}/{readiness.pages} 页
-          </span>
-        )}
         <button
           disabled={isGenerating}
           onClick={handleDelete}
@@ -753,8 +755,8 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
                   ? `缺第 ${missingImages.join('、')} 页`
                   : undefined
               }
-              actionText={canResume ? '补跑失败页' : undefined}
-              onAction={canResume ? () => setConfirmGen(true) : undefined}
+              actionText={canRepaint ? '去补画' : undefined}
+              onAction={canRepaint ? () => setConfirmGen(true) : undefined}
             />
             <CheckRow
               ok={missingTexts.length === 0}
@@ -896,7 +898,7 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
                     </button>
                     {(s.status === 'interrupted' || s.status === 'failed') && (
                       <button
-                        disabled={busyTts || isGeneratingTts}
+                        disabled={busyTts || isGeneratingTts || !canTts}
                         onClick={() => handleResumeSet(s.id)}
                         className="text-xs px-3 py-1.5 rounded-lg bg-gold text-ink disabled:opacity-50"
                       >
@@ -970,7 +972,7 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
         </div>
       </section>
 
-      {showCfg && (
+      <Modal open={showCfg} onClose={() => setShowCfg(false)} title="故事配置">
         <StoryConfigPanel
           story={story}
           onSaved={async () => {
@@ -978,12 +980,12 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
             onChanged();
           }}
         />
-      )}
+      </Modal>
 
       {confirmGen && (
         <div className="bg-white dark:bg-gray-800 rounded-xl shadow p-5">
           <h3 className="font-bold mb-2">
-            {canResume ? '确认继续生图' : '确认开始生图'}
+            {!hasGenerated ? '确认开始生图' : '确认续跑生图'}
           </h3>
           <p className="text-sm text-gray-600 dark:text-gray-300 mb-2">
             将使用「故事配置」中的生图参数：帧阈值 {genCfg.frame_threshold} · 序列阈值{' '}
@@ -992,7 +994,7 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
           </p>
           <p className="text-sm text-amber-600 mb-3">
             共 {pages.length} 页，最多约 {estimateCalls} 次生图调用
-            {canResume ? '（本次只补未成功的页）' : ''}。
+            {!hasGenerated ? '' : '（续跑：已有图页跳过，仅补齐缺失页）'}。
           </p>
           <div className="flex gap-2">
             <button
@@ -1013,7 +1015,7 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
       )}
 
       <section>
-        <h3 className="text-lg font-bold mb-2">生成版本</h3>
+        <h3 className="text-lg font-bold mb-2">生图版本（当前生效高亮）</h3>
         {task && ['queued', 'running'].includes(task.status) && (
           <div className="mb-3 text-sm text-gray-600 dark:text-gray-300 flex items-center gap-3">
             <span>
@@ -1049,7 +1051,7 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
                   loadRunDetail(r.id);
                 }}
                 className={`px-3 py-1.5 rounded-lg text-sm border ${
-                  r.id === activeRunId
+                  r.id === story.current_run_id
                     ? 'border-brand bg-[#f6e6c8]'
                     : 'border-gray-300 dark:border-gray-600'
                 }`}
@@ -1066,14 +1068,6 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
 
       {runDetail && (
         <section className="space-y-4">
-          <div className="flex items-center gap-3 flex-wrap">
-            <span
-              className={`px-2 py-1 rounded-full text-sm ${runStatusColor(runDetail.run.status)}`}
-            >
-              版本 #{runDetail.run.id} · {runDetail.run.status}
-            </span>
-          </div>
-
           <AnchorGallery characters={runDetail.characters} />
 
           {runDetail.sequence_checks.length > 0 &&

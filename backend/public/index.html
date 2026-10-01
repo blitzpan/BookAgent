@@ -45,8 +45,8 @@
       const backBtn = document.getElementById("back");
       const STATUS_ZH = {
         "新建":"新建","AI改写中":"AI改写中","改写完成待生图":"改写完成待生图",
-        "生图中":"生图中","生图完成待审批":"生图完成待审批","生图部分失败":"生图部分失败",
-        "待审批发行":"待审批发行","审批通过的作品":"已发布","删除":"删除"
+        "生图中":"生图中","生图完成待发布":"生图完成待发布","生图部分失败":"生图部分失败",
+        "审批通过的作品":"已发布","删除":"删除"
       };
       const api = (p, opt) => fetch("/api" + p, opt).then(async r => {
         const t = await r.text(); const j = t ? JSON.parse(t) : {};

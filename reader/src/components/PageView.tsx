@@ -125,7 +125,9 @@ function SegmentList({
               <>
                 {lang !== "en" && (
                   <p className={`caption-line ${segmentStyle(s.role, s.speaker)}`}>
-                    {s.role === "dialogue" && s.speaker && (
+                    {/* 图上已标注的分段（onImg）由位置/气泡表达说话人，不再重复"X说："；
+                        仅图外文案显示"说话人："前缀。 */}
+                    {!onImg && s.role === "dialogue" && s.speaker && (
                       <span className="caption-lang">{s.speaker}：</span>
                     )}
                     {s.textZh}
@@ -133,8 +135,9 @@ function SegmentList({
                 )}
                 {lang !== "zh" && (
                   <p className={`caption-line ${segmentStyle(s.role, s.speaker)}`}>
-                    {s.role === "dialogue" && s.speaker && (
-                      <span className="caption-lang">{s.speaker}: </span>
+                    {/* 英文行用 speakerEn 作说话人前缀（图外才显示，图上已含纯台词） */}
+                    {!onImg && s.role === "dialogue" && s.speakerEn && (
+                      <span className="caption-lang">{s.speakerEn}: </span>
                     )}
                     {s.textEn}
                   </p>

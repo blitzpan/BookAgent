@@ -8,6 +8,7 @@ import {
   STORY_STATUS,
   assertStoryTransition,
 } from "../constants/status";
+import { styleToEnglish } from "../constants/style";
 import type { CreateStoryInput, Page, Story } from "../types";
 import {
   refineStoryForPageCount,
@@ -21,6 +22,40 @@ import {
 } from "../constants/generationConfig";
 
 const now = () => new Date().toISOString();
+
+/** 转义正则特殊字符，避免说话人名字里的标点破坏正则。 */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * 保守剥离「说话人前缀」：对话台词只应含纯台词，说话人已在 speaker 字段。
+ * 仅当 speaker 非空且文本确实以「speaker 说/：/:」开头时才剥离，避免误伤
+ * （如「妈妈说的话很重要」里虽含"说"但非前缀，不剥）。
+ * 英文做通用兜底：句首 "Name:" / "Name said:"（仅首字母大写词）也剥离。
+ * 这是 prompt 约束之外的第二道防线，主要用于清洗历史/模型偶发异常数据。
+ */
+function stripSpeakerPrefix(
+  text: string,
+  speaker?: string | null,
+  speakerEn?: string | null
+): string {
+  if (!text) return text;
+  let t = text;
+  if (speaker) {
+    const zh = new RegExp(`^${escapeRegExp(speaker)}(说|：|:|\\s)*`);
+    t = t.replace(zh, "").trim();
+  }
+  // 英文说话人：直接用英文名剥离「Name:」前缀（忽略大小写），再走通用兜底。
+  if (speakerEn) {
+    const enName = new RegExp(`^${escapeRegExp(speakerEn)}(:|\\s)*`, "i");
+    t = t.replace(enName, "").trim();
+  }
+  const en = /^([A-Z][\w'-]*(?:\s+[A-Z][\w'-]*){0,2})(?:\s+said)?:\s*/;
+  const m = t.match(en);
+  if (m) t = t.slice(m[0].length).trim();
+  return t;
+}
 
 /** 后端资源相对路径（如 "assets/1/1/101.png"）-> 浏览器可访问的 /assets/... URL。 */
 function toAssetUrl(rel?: string | null): string | null {
@@ -106,19 +141,21 @@ export async function rewriteStory(storyId: number): Promise<RewriteResult> {
   const story = getStoryRaw(storyId);
   if (!story) throw new Error(`故事不存在: ${storyId}`);
 
-  // 状态守卫：仅 新建 / 改写完成待生图 可重新改写
+  // 状态守卫：发布前可随时重新改写（含生图完成/部分失败态）。已发布则不可改写（冻结）。
   if (
     story.status !== STORY_STATUS.NEW &&
-    story.status !== STORY_STATUS.REWRITE_DONE
+    story.status !== STORY_STATUS.REWRITE_DONE &&
+    story.status !== STORY_STATUS.GEN_DONE &&
+    story.status !== STORY_STATUS.GEN_PARTIAL_FAILED
   ) {
     throw new Error(
-      `当前状态(${story.status})不允许改写，需为「新建」或「改写完成待生图」`
+      `当前状态(${story.status})不允许改写，需为未发布态（新建/改写完成/生图完成/生图部分失败）`
     );
   }
   assertStoryTransition(story.status, STORY_STATUS.REWRITING);
 
   const pageCount = story.target_page_count ?? 6;
-  const style = story.style ?? "whimsical, cute, children's picture-book style";
+  const style = styleToEnglish(story.style);
   const inspirationPath = story.inspiration_image_path
     ? pathFromStory(story) // 见下
     : null;
@@ -195,23 +232,26 @@ export async function rewriteStory(storyId: number): Promise<RewriteResult> {
         const segs = Array.isArray(p.segments) ? p.segments : [];
         segs.forEach((s, i) => {
           db.prepare(
-            `INSERT INTO page_segments (page_id, story_id, seq, role, speaker, text_zh, text_en)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`
+            `INSERT INTO page_segments (page_id, story_id, seq, role, speaker, speaker_en, text_zh, text_en)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
           ).run(
             pageId,
             storyId,
             Number(s.seq ?? i + 1),
             s.role ?? "narration",
             s.speaker ?? null,
-            s.textZh ?? "",
-            s.textEn ?? ""
+            s.speakerEn ?? null,
+            stripSpeakerPrefix(s.textZh ?? "", s.speaker ?? null, null),
+            stripSpeakerPrefix(s.textEn ?? "", s.speakerEn ?? null, s.speakerEn ?? null)
           );
         });
       }
       db.prepare(
         `UPDATE stories
          SET refined_text = ?, safety_result = ?, rewrite_result = ?,
-             status = ?, updated_at = ?
+             status = ?, updated_at = ?,
+             current_run_id = NULL, selected_audio_set_id = NULL,
+             has_audio = 0, has_hotspots = 0
          WHERE id = ?`
       ).run(
         refinedStory,
@@ -306,25 +346,79 @@ export function getStoryRaw(id: number): Story | undefined {
     | undefined;
 }
 
-export function listStories(status?: string): Array<{
+export interface StoryListFilter {
+  title?: string;
+  status?: string;
+  generated?: "all" | "done" | "none" | "partial";
+  audio?: "all" | "done" | "none" | "generating" | "interrupted";
+  hotspots?: "all" | "done" | "none";
+}
+
+export function listStories(filter?: StoryListFilter): Array<{
   id: number;
   user_title: string | null;
   status: string;
   page_count: number;
   created_at: string | null;
+  updated_at: string | null;
+  currentRunId: number | null;
+  hasAudioSnap: number; // 层快照：是否曾生成配音（不区分次数）
+  hasHotspots: number; // 层快照：是否曾配置热区
+  selectedAudioSetId: number | null;
+  isGenerating: number; // 配音任务进行中
+  hasAudioDone: number; // 至少有一组配音 completed
+  audioSetCount: number;
+  cover_url: string | null;
 }> {
-  // 已发布过滤：reader 书架只请求 status='审批通过的作品'，避免草稿外泄。
-  // 无参时行为不变（管理壳兼容）。
-  const sql = `SELECT s.id, s.user_title, s.status, s.created_at, s.current_run_id AS currentRunId,
-                      (SELECT COUNT(*) FROM pages p WHERE p.story_id = s.id) AS page_count,
+  const where: string[] = ["s.deleted_at IS NULL"];
+  const params: unknown[] = [];
+
+  if (filter?.title) {
+    where.push("s.user_title LIKE ?");
+    params.push(`%${filter.title}%`);
+  }
+  if (filter?.status) {
+    where.push("s.status = ?");
+    params.push(filter.status);
+  }
+  if (filter?.generated && filter.generated !== "all") {
+    if (filter.generated === "done") {
+      where.push("s.current_run_id IS NOT NULL AND s.status != ?");
+      params.push("生图部分失败");
+    } else if (filter.generated === "none") {
+      where.push("s.current_run_id IS NULL");
+    } else if (filter.generated === "partial") {
+      where.push("s.status = ?");
+      params.push("生图部分失败");
+    }
+  }
+  if (filter?.audio && filter.audio !== "all") {
+    if (filter.audio === "done") {
+      where.push("(SELECT COUNT(*) FROM audio_sets a WHERE a.story_id = s.id AND a.status='completed') > 0");
+    } else if (filter.audio === "none") {
+      where.push("(SELECT COUNT(*) FROM audio_sets a WHERE a.story_id = s.id) = 0");
+    } else if (filter.audio === "generating") {
+      where.push("(SELECT COUNT(*) FROM audio_sets a WHERE a.story_id = s.id AND a.status='generating') > 0");
+    } else if (filter.audio === "interrupted") {
+      where.push("(SELECT COUNT(*) FROM audio_sets a WHERE a.story_id = s.id AND a.status='interrupted') > 0");
+    }
+  }
+  if (filter?.hotspots && filter.hotspots !== "all") {
+    where.push(filter.hotspots === "done" ? "COALESCE(s.has_hotspots,0) = 1" : "COALESCE(s.has_hotspots,0) = 0");
+  }
+
+  const sql = `SELECT s.id, s.user_title, s.status, s.created_at, s.updated_at,
+                      s.current_run_id AS currentRunId,
+                      s.has_audio AS hasAudioSnap, s.has_hotspots AS hasHotspots,
                       s.selected_audio_set_id AS selectedAudioSetId,
                       ((SELECT COUNT(*) FROM audio_sets a WHERE a.story_id = s.id AND a.status='generating') > 0) AS isGenerating,
-                      ((SELECT COUNT(*) FROM audio_sets a WHERE a.story_id = s.id AND a.status='completed') > 0) AS hasAudio,
-                      (SELECT COUNT(*) FROM audio_sets a WHERE a.story_id = s.id) AS audioSetCount
+                      ((SELECT COUNT(*) FROM audio_sets a WHERE a.story_id = s.id AND a.status='completed') > 0) AS hasAudioDone,
+                      (SELECT COUNT(*) FROM audio_sets a WHERE a.story_id = s.id) AS audioSetCount,
+                      (SELECT COUNT(*) FROM pages p WHERE p.story_id = s.id) AS page_count
                FROM stories s
-               WHERE s.deleted_at IS NULL${status ? " AND s.status = ?" : ""}
+               WHERE ${where.join(" AND ")}
                ORDER BY s.updated_at DESC, s.id DESC`;
-  const rows = (status ? db.prepare(sql).all(status) : db.prepare(sql).all()) as any[];
+  const rows = db.prepare(sql).all(...params) as any[];
   // 计算真实封面 URL（当前生效版本第 1 页默认图），供前端书架直接展示。
   return rows.map((r: any) => ({ ...r, cover_url: getCoverUrl(r.id, r.currentRunId ?? null) }));
 }

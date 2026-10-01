@@ -41,6 +41,7 @@ export function mockBook(storyId: number): ReaderPage[] {
         seq: 1,
         role: "narration",
         speaker: null,
+        speakerEn: null,
         textZh: ZH[i % ZH.length],
         textEn: EN[i % EN.length],
         audioUrls: {},

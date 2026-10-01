@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS stories (
   generation_config   TEXT,                       -- JSON 生图参数(见 constants/generationConfig.ts)
   current_run_id      INTEGER,                    -- 当前生效的整书 run(版本指针)
   selected_audio_set_id INTEGER,                   -- 当前选用的配音方案(audio_sets.id)，开发阶段新增
+  has_audio           INTEGER DEFAULT 0,           -- 层快照：任一 audio_set 曾 completed → 1（不区分次数，至少一次）
+  has_hotspots        INTEGER DEFAULT 0,           -- 层快照：任一热区行存在过 → 1（改写会清空热区，故改写时归 0）
   created_at          TEXT,
   updated_at          TEXT,
   deleted_at          TEXT
@@ -135,7 +137,8 @@ CREATE TABLE IF NOT EXISTS page_segments (
   story_id  INTEGER NOT NULL,
   seq       INTEGER NOT NULL,
   role      TEXT NOT NULL DEFAULT 'narration', -- 'narration'|'dialogue'|'background'|'sfx'
-  speaker   TEXT,                              -- 对话角色名（role=dialogue）
+  speaker   TEXT,                              -- 对话角色名（role=dialogue，中文）
+  speaker_en TEXT,                             -- 对话角色英文名（role=dialogue，英文语境显示）
   text_zh   TEXT NOT NULL,
   text_en   TEXT NOT NULL
 );
