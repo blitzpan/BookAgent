@@ -1,9 +1,14 @@
 :root {
-  --bg: #0f1020;
-  --panel: #1b1c2e;
-  --text: #ffffff;
-  --muted: #b9b9c9;
-  --accent: #ffd166;
+  /* 暖近黑「夜读灯」：带棕调的近黑，而非冷调深蓝（决策 3） */
+  --bg: #17120c;
+  --bg-2: #221a12;
+  --panel: #241c14;
+  --panel-2: #2e241a;
+  --text: #f4ece0;
+  --muted: #b6a392;
+  --accent: #e8b15a; /* 暖金点缀 */
+  --accent-soft: rgba(232, 177, 90, 0.16);
+  --line: rgba(255, 255, 255, 0.1);
 }
 
 * {
@@ -20,9 +25,11 @@ body,
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", Roboto, sans-serif;
-  background: var(--bg);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
+  /* 顶部暖光晕，营造台灯下读书的氛围 */
+  background: radial-gradient(130% 90% at 50% -10%, var(--panel-2) 0%, var(--bg) 55%);
+  background-attachment: fixed;
 }
 
 /* ---------- 书架 ---------- */
@@ -38,6 +45,7 @@ body {
 
 .shelf-header h1 {
   font-size: 28px;
+  letter-spacing: 0.02em;
 }
 
 .shelf-header p {
@@ -64,7 +72,13 @@ body {
   background: var(--panel);
   border-radius: 14px;
   overflow: hidden;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--line);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.book-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45);
 }
 
 .book-cover {
@@ -73,16 +87,18 @@ body {
   align-items: center;
   justify-content: center;
   padding: 12px;
+  background: var(--panel-2);
 }
 
 .book-cover img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  border-radius: 6px;
 }
 
 .book-cover-title {
-  color: #fff;
+  color: var(--text);
   font-weight: 600;
   text-align: center;
   font-size: 18px;
@@ -136,12 +152,17 @@ body {
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.08);
 }
+.btn-back:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
 
 .reader-stage {
   flex: 1;
   position: relative;
   overflow: hidden;
-  background: #000;
+  background: #0e0b07;
+  /* 暖色暗角，聚焦中央插画 */
+  box-shadow: inset 0 0 120px rgba(0, 0, 0, 0.55);
 }
 
 .reader-nav {
@@ -158,10 +179,9 @@ body {
   border: none;
   border-radius: 10px;
   background: var(--accent);
-  color: #222;
+  color: #2a2018;
   font-weight: 600;
 }
-
 .reader-nav button:disabled {
   opacity: 0.4;
 }
@@ -177,7 +197,7 @@ body {
   position: relative;
   display: flex;
   flex-direction: column;
-  background: #000;
+  background: #0e0b07;
 }
 
 .page-image-wrap {
@@ -200,16 +220,16 @@ body {
   align-items: center;
   justify-content: center;
   color: var(--muted);
-  background: #111;
+  background: #1a140d;
   font-size: 16px;
 }
 
 /* 玻璃拟态音频控制条（播放/暂停/进度/自动翻页） */
 .audio-control.glass {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.1);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  border-top: 1px solid rgba(255, 255, 255, 0.18);
+  border-top: 1px solid rgba(255, 255, 255, 0.16);
 }
 
 .page-caption {
@@ -218,15 +238,15 @@ body {
   right: 0;
   bottom: 64px;
   padding: 28px 18px 18px;
-  background: linear-gradient(to top, rgba(0, 0, 0, 0.85), rgba(0, 0, 0, 0));
+  background: linear-gradient(to top, rgba(14, 11, 7, 0.92), rgba(14, 11, 7, 0));
   max-height: 45%;
   overflow-y: auto;
 }
 
 .caption-line {
   margin-top: 6px;
-  line-height: 1.5;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  line-height: 1.55;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
 }
 
 .caption-lang {
@@ -266,15 +286,15 @@ body {
   font-size: 12px;
   line-height: 1.3;
   white-space: pre-line;
-  border: 2px dashed rgba(255, 209, 102, 0.9);
-  background: rgba(255, 209, 102, 0.15);
+  border: 2px dashed var(--accent);
+  background: var(--accent-soft);
   border-radius: 10px;
-  color: #5a3d00;
+  color: #f3e6cd;
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
 }
 .hotspot:hover {
-  background: rgba(255, 209, 102, 0.35);
+  background: rgba(232, 177, 90, 0.32);
   border-color: rgba(255, 255, 255, 0.95);
   transform: translate(-50%, -50%) scale(1.04);
 }
@@ -315,7 +335,7 @@ body {
   height: 40px;
   border-radius: 50%;
   border: none;
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(20, 14, 8, 0.6);
   color: #fff;
   font-size: 16px;
   display: flex;
@@ -341,7 +361,7 @@ body {
 }
 
 .state-error {
-  color: #ff6b6b;
+  color: #ff8a8a;
 }
 
 /* ---------- 切换控件 ---------- */
@@ -363,6 +383,184 @@ body {
 
 .toggle button.active {
   background: var(--accent);
-  color: #222;
+  color: #2a2018;
   font-weight: 600;
+}
+
+/* =====================================================================
+   Reader 自包含工具类层（不依赖 Tailwind，保持设计系统独立，决策 1）
+   仅覆盖 PageView / SegmentList 实际用到的类名，统一暖色语义。
+   ===================================================================== */
+.flex { display: flex; }
+.inline-flex { display: inline-flex; }
+.flex-col { flex-direction: column; }
+.flex-1 { flex: 1 1 0%; }
+.items-center { align-items: center; }
+.items-start { align-items: flex-start; }
+.justify-center { justify-content: center; }
+.justify-between { justify-content: space-between; }
+.flex-wrap { flex-wrap: wrap; }
+.w-full { width: 100%; }
+.text-left { text-align: left; }
+.text-center { text-align: center; }
+.shrink-0 { flex-shrink: 0; }
+.cursor-pointer { cursor: pointer; }
+.select-none { user-select: none; }
+.italic { font-style: italic; }
+.transition { transition: all 0.2s ease; }
+
+.gap-1 { gap: 0.25rem; }
+.gap-2 { gap: 0.5rem; }
+.gap-3 { gap: 0.75rem; }
+.mt-1 { margin-top: 0.25rem; }
+
+.text-xs { font-size: 0.75rem; line-height: 1rem; }
+.text-sm { font-size: 0.875rem; line-height: 1.25rem; }
+
+.px-2 { padding-left: 0.5rem; padding-right: 0.5rem; }
+.px-3 { padding-left: 0.75rem; padding-right: 0.75rem; }
+.px-4 { padding-left: 1rem; padding-right: 1rem; }
+.py-1 { padding-top: 0.25rem; padding-bottom: 0.25rem; }
+.py-2 { padding-top: 0.5rem; padding-bottom: 0.5rem; }
+.py-3 { padding-top: 0.75rem; padding-bottom: 0.75rem; }
+
+.rounded-lg { border-radius: 0.5rem; }
+.rounded-2xl { border-radius: 1rem; }
+.rounded-full { border-radius: 9999px; }
+.max-w-\[85\%\] { max-width: 85%; }
+.w-10 { width: 2.5rem; }
+.h-10 { height: 2.5rem; }
+.h-1\.5 { height: 0.375rem; }
+.h-full { height: 100%; }
+
+.hover\:scale-105:hover { transform: scale(1.05); }
+.disabled\:opacity-40:disabled { opacity: 0.4; }
+.disabled\:opacity-50:disabled { opacity: 0.5; }
+.disabled\:cursor-not-allowed:disabled { cursor: not-allowed; }
+.hover\:bg-gray-100:hover { background: rgba(255, 255, 255, 0.08); }
+
+/* 暖色语义映射 */
+.text-gray-400,
+.text-gray-500,
+.text-gray-600 { color: var(--muted); }
+.text-gray-800,
+.text-gray-900,
+.text-gray-100 { color: var(--text); }
+.bg-gray-200 { background: rgba(255, 255, 255, 0.12); }
+.bg-gray-700 { background: rgba(255, 255, 255, 0.08); }
+
+.bg-sky-100 { background: #2c231a; color: #f0e2cf; border: 1px solid #3d3026; }
+.text-sky-900 { color: #f0e2cf; }
+.border-sky-200 { border-color: #3d3026; }
+
+.bg-violet-100 { background: #332a1e; color: #f0e2cf; border: 1px solid #3d3026; }
+.text-violet-900 { color: #f0e2cf; }
+.border-violet-200 { border-color: #3d3026; }
+
+.bg-violet-600 { background: var(--accent); color: #2a2018; }
+.bg-violet-500 { background: var(--accent); }
+.accent-violet-600 { accent-color: var(--accent); }
+.text-amber-600 { color: var(--accent); }
+
+/* =====================================================================
+   日间模式（「日间绘本」）：默认夜间「绘本夜」，可一键切换（决策 3 补充）。
+   仅覆盖 CSS 变量与少量硬编码颜色，所有组件随变量自动重染（两套体系零共享）。
+   ===================================================================== */
+:root[data-reader-theme="day"] {
+  --bg: #f3ece0;
+  --bg-2: #ece2d2;
+  --panel: #fbf6ec;
+  --panel-2: #f1e8d8;
+  --text: #3a2f25;
+  --muted: #8a7a68;
+  --accent: #c8643c;
+  --accent-soft: rgba(200, 100, 60, 0.14);
+  --line: rgba(58, 47, 37, 0.12);
+}
+
+:root[data-reader-theme="day"] .reader-stage,
+:root[data-reader-theme="day"] .page-view {
+  background: #efe6d6;
+}
+:root[data-reader-theme="day"] .reader-stage {
+  box-shadow: inset 0 0 80px rgba(58, 47, 37, 0.06);
+}
+:root[data-reader-theme="day"] .page-image-empty {
+  background: #e3d8c5;
+  color: var(--muted);
+}
+:root[data-reader-theme="day"] .page-caption {
+  background: linear-gradient(to top, rgba(243, 236, 224, 0.94), rgba(243, 236, 224, 0));
+}
+:root[data-reader-theme="day"] .caption-line {
+  text-shadow: 0 1px 3px rgba(255, 255, 255, 0.6);
+}
+:root[data-reader-theme="day"] .audio-control.glass {
+  background: rgba(255, 255, 255, 0.62);
+  border-top: 1px solid rgba(58, 47, 37, 0.12);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+:root[data-reader-theme="day"] .hotspot {
+  color: #4a3b2c;
+}
+:root[data-reader-theme="day"] .hotspot:hover {
+  background: rgba(200, 100, 60, 0.18);
+  border-color: rgba(58, 47, 37, 0.5);
+}
+:root[data-reader-theme="day"] .hotspot-bubble {
+  background: rgba(58, 47, 37, 0.86);
+  color: #fff;
+}
+:root[data-reader-theme="day"] .audio-btn {
+  background: rgba(200, 100, 60, 0.18);
+  color: #3a2f25;
+}
+/* 顶部栏 / 切换控件在日间的暖灰底 */
+:root[data-reader-theme="day"] .btn-back,
+:root[data-reader-theme="day"] .btn-theme,
+:root[data-reader-theme="day"] .toggle {
+  background: rgba(58, 47, 37, 0.08);
+}
+:root[data-reader-theme="day"] .btn-back:hover,
+:root[data-reader-theme="day"] .btn-theme:hover {
+  background: rgba(58, 47, 37, 0.14);
+}
+:root[data-reader-theme="day"] .toggle button {
+  color: var(--muted);
+}
+/* 自包含工具类层在日间的暖色重映射（PageView/SegmentList 用） */
+:root[data-reader-theme="day"] .bg-sky-100 { background: #fbf0e2; color: #8a5a1e; border-color: #e6cfa8; }
+:root[data-reader-theme="day"] .text-sky-900 { color: #8a5a1e; }
+:root[data-reader-theme="day"] .border-sky-200 { border-color: #e6cfa8; }
+:root[data-reader-theme="day"] .bg-violet-100 { background: #fbeede; color: #9c4a2c; border-color: #eccca6; }
+:root[data-reader-theme="day"] .text-violet-900 { color: #9c4a2c; }
+:root[data-reader-theme="day"] .border-violet-200 { border-color: #eccca6; }
+:root[data-reader-theme="day"] .bg-violet-600 { background: var(--accent); color: #fff; }
+:root[data-reader-theme="day"] .bg-violet-500 { background: var(--accent); }
+:root[data-reader-theme="day"] .accent-violet-600 { accent-color: var(--accent); }
+:root[data-reader-theme="day"] .text-amber-600 { color: #b5642f; }
+:root[data-reader-theme="day"] .hover\:bg-gray-100:hover { background: rgba(58, 47, 37, 0.08); }
+
+/* 夜/日切换按钮（与 .btn-back 同款暖色底） */
+.btn-theme {
+  color: var(--text);
+  text-decoration: none;
+  font-size: 14px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  border: none;
+  cursor: pointer;
+}
+.btn-theme:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+/* 书架头部行：标题 + 主题切换 */
+.shelf-header-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
 }

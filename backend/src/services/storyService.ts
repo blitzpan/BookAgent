@@ -22,6 +22,32 @@ import {
 
 const now = () => new Date().toISOString();
 
+/** 后端资源相对路径（如 "assets/1/1/101.png"）-> 浏览器可访问的 /assets/... URL。 */
+function toAssetUrl(rel?: string | null): string | null {
+  if (!rel) return null;
+  const stripped = rel.replace(/^assets[/\\]/, "");
+  return `/assets/${stripped}`;
+}
+
+/**
+ * 取某书封面图 URL：该书当前生效版本（current_run_id）第 1 页的默认图。
+ * 无版本 / 无图时返回 null，前端回退到标题占位。
+ */
+export function getCoverUrl(storyId: number, runId: number | null): string | null {
+  if (runId == null) return null;
+  const row = db
+    .prepare(
+      `SELECT pi.image_path AS p
+       FROM pages pg
+       JOIN page_images pi ON pi.page_id = pg.id
+       WHERE pg.story_id = ? AND pg.page_number = 1
+         AND pi.generation_run_id = ? AND pi.is_default = 1
+       LIMIT 1`
+    )
+    .get(storyId, runId) as { p: string | null } | undefined;
+  return toAssetUrl(row?.p ?? null);
+}
+
 export interface CreateStoryResult {
   id: number;
   inspiration_image_path?: string;
@@ -289,7 +315,7 @@ export function listStories(status?: string): Array<{
 }> {
   // 已发布过滤：reader 书架只请求 status='审批通过的作品'，避免草稿外泄。
   // 无参时行为不变（管理壳兼容）。
-  const sql = `SELECT s.id, s.user_title, s.status, s.created_at,
+  const sql = `SELECT s.id, s.user_title, s.status, s.created_at, s.current_run_id AS currentRunId,
                       (SELECT COUNT(*) FROM pages p WHERE p.story_id = s.id) AS page_count,
                       s.selected_audio_set_id AS selectedAudioSetId,
                       ((SELECT COUNT(*) FROM audio_sets a WHERE a.story_id = s.id AND a.status='generating') > 0) AS isGenerating,
@@ -298,7 +324,9 @@ export function listStories(status?: string): Array<{
                FROM stories s
                WHERE s.deleted_at IS NULL${status ? " AND s.status = ?" : ""}
                ORDER BY s.updated_at DESC, s.id DESC`;
-  return (status ? db.prepare(sql).all(status) : db.prepare(sql).all()) as any[];
+  const rows = (status ? db.prepare(sql).all(status) : db.prepare(sql).all()) as any[];
+  // 计算真实封面 URL（当前生效版本第 1 页默认图），供前端书架直接展示。
+  return rows.map((r: any) => ({ ...r, cover_url: getCoverUrl(r.id, r.currentRunId ?? null) }));
 }
 
 export function getStoryDetail(id: number): {
@@ -310,7 +338,8 @@ export function getStoryDetail(id: number): {
   const pages = db
     .prepare(`SELECT * FROM pages WHERE story_id = ? ORDER BY page_number ASC`)
     .all(id) as Page[];
-  return { story, pages };
+  // 详情故事对象附带封面 URL，便于前端详情页/分享卡片直接取用。
+  return { story: { ...story, cover_url: getCoverUrl(id, story.current_run_id) }, pages };
 }
 
 export function getPagesByStory(id: number): Page[] {

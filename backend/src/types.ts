@@ -18,6 +18,7 @@ export interface Story {
   generation_config: string | null; // JSON 生图参数
   current_run_id: number | null; // 当前生效版本
   selected_audio_set_id: number | null; // 当前选用配音方案
+  cover_url: string | null; // 当前生效版本第 1 页默认图（接口层计算填充）
   created_at: string | null;
   updated_at: string | null;
   deleted_at: string | null;

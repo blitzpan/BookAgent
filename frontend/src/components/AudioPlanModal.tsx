@@ -16,7 +16,7 @@ type Track = {
 };
 
 const ROLE_BADGE: Record<string, string> = {
-  narration: "bg-violet-100 text-violet-700",
+  narration: "bg-gold-soft text-ink",
   dialogue: "bg-sky-100 text-sky-700",
   background: "bg-amber-100 text-amber-700",
   sfx: "bg-pink-100 text-pink-700",
@@ -153,7 +153,7 @@ export const AudioPlanModal: React.FC<{
       >
         <div className="flex items-center justify-between border-b border-violet-200/60 p-4">
           <div>
-            <h3 className="text-lg font-bold text-violet-800 dark:text-violet-200">
+            <h3 className="text-lg font-bold text-ink">
               试听 · {name}
             </h3>
             <p className="text-xs text-gray-500">
@@ -187,7 +187,7 @@ export const AudioPlanModal: React.FC<{
                 className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${
                   queueIndex === i
                     ? "bg-violet-600 text-white"
-                    : "bg-violet-100 text-violet-700 hover:bg-violet-200"
+                    : "bg-gold-soft text-ink hover:bg-violet-200"
                 }`}
                 aria-label={queueIndex === i ? "停止" : "播放"}
               >

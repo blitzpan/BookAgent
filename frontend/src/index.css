@@ -1,0 +1,22 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-paper text-ink font-sans antialiased;
+  }
+}
+
+/* 全局：暖色聚焦态（去默认蓝圈） */
+@layer components {
+  .focus-warm {
+    @apply outline-none focus-visible:ring-2 focus-visible:ring-brand/40;
+  }
+}

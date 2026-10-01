@@ -2,12 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { getPublishedStories } from "../api/client";
 import type { ShelfBook } from "../types";
-
-function coverGradient(id: number): string {
-  const a = (id * 47) % 360;
-  const b = (a + 40) % 360;
-  return `linear-gradient(135deg, hsl(${a} 65% 68%), hsl(${b} 70% 52%))`;
-}
+import ThemeToggle from "../components/ThemeToggle";
 
 export default function Shelf() {
   const [books, setBooks] = useState<ShelfBook[] | null>(null);
@@ -26,8 +21,13 @@ export default function Shelf() {
   return (
     <div className="shelf">
       <header className="shelf-header">
-        <h1>绘本馆</h1>
-        <p>精选已发布绘本</p>
+        <div className="shelf-header-row">
+          <div>
+            <h1>绘本馆</h1>
+            <p>精选已发布绘本</p>
+          </div>
+          <ThemeToggle />
+        </div>
       </header>
 
       {error && <div className="state state-error">{error}</div>}
@@ -37,9 +37,9 @@ export default function Shelf() {
       <div className="shelf-grid">
         {books?.map((b) => (
           <Link key={b.id} to={`/book/${b.id}`} className="book-card">
-            <div className="book-cover" style={{ background: coverGradient(b.id) }}>
+            <div className="book-cover">
               {b.coverUrl ? (
-                <img src={b.coverUrl} alt={b.userTitle || "绘本"} />
+                <img src={b.coverUrl} alt={b.userTitle || "绘本"} loading="lazy" />
               ) : (
                 <span className="book-cover-title">{b.userTitle || "未命名绘本"}</span>
               )}

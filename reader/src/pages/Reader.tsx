@@ -8,6 +8,7 @@ import SpreadView from "../components/SpreadView";
 import LangToggle from "../components/LangToggle";
 import FontSizeControl from "../components/FontSizeControl";
 import ModeToggle from "../components/ModeToggle";
+import ThemeToggle from "../components/ThemeToggle";
 import type { LangMode, ReadMode } from "../types";
 
 const FONT_SIZES = [16, 20, 26];
@@ -59,6 +60,7 @@ export default function Reader() {
         <LangToggle value={lang} onChange={setLang} />
         <FontSizeControl idx={fontIdx} onChange={setFontIdx} />
         {isWide && <ModeToggle value={effectiveMode} onChange={setMode} />}
+        <ThemeToggle />
       </div>
 
       <div className="reader-stage" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>

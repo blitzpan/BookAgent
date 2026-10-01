@@ -27,9 +27,9 @@ interface Props {
 const ACTIVE = new Set(['queued', 'running']);
 
 const AUDIO_SET_BADGE: Record<string, { label: string; cls: string }> = {
-  pending: { label: '待生成', cls: 'bg-gray-100 text-gray-600' },
-  generating: { label: '配音中', cls: 'bg-violet-100 text-violet-700' },
-  completed: { label: '已配音', cls: 'bg-emerald-100 text-emerald-700' },
+  pending: { label: '待生成', cls: 'bg-stone-100 text-stone-600' },
+  generating: { label: '配音中', cls: 'bg-gold-soft text-ink' },
+  completed: { label: '已配音', cls: 'bg-sage-soft text-sage' },
   interrupted: { label: '中断', cls: 'bg-amber-100 text-amber-700' },
   failed: { label: '失败', cls: 'bg-red-100 text-red-700' },
 };
@@ -57,7 +57,7 @@ function CheckRow({
       <span
         className={`text-xs px-2 py-0.5 rounded-full ${
           ok
-            ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-200'
+            ? 'bg-sage-soft text-sage dark:bg-emerald-900 dark:text-emerald-200'
             : hard
               ? 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-200'
               : 'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-200'
@@ -73,7 +73,7 @@ function CheckRow({
       {!ok && actionText && onAction && (
         <button
           onClick={onAction}
-          className="ml-auto text-xs px-2 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700"
+          className="ml-auto text-xs px-2 py-1 rounded-lg bg-brand text-white hover:bg-brand-strong"
         >
           {actionText}
         </button>
@@ -600,14 +600,14 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
           disabled={busy || isGenerating}
           title={isGenerating ? '生图进行中，暂不可改写' : undefined}
           onClick={handleRewrite}
-          className="px-4 py-2 rounded-lg bg-blue-600 text-white disabled:opacity-50"
+          className="px-4 py-2 rounded-lg bg-brand text-white disabled:opacity-50"
         >
           改写
         </button>
         <button
           disabled={busy}
           onClick={() => setShowCfg((v) => !v)}
-          className="px-4 py-2 rounded-lg bg-slate-600 text-white disabled:opacity-50"
+          className="px-4 py-2 rounded-lg bg-stone-600 text-white hover:bg-stone-700 disabled:opacity-50"
         >
           {showCfg ? '收起故事配置' : '故事配置'}
         </button>
@@ -615,7 +615,7 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
           <button
             disabled={busy || isGenerating}
             onClick={() => setConfirmGen(true)}
-            className="px-4 py-2 rounded-lg bg-indigo-600 text-white disabled:opacity-50"
+            className="px-4 py-2 rounded-lg bg-brand text-white disabled:opacity-50"
           >
             开始生图
           </button>
@@ -623,7 +623,7 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
           <button
             disabled={busy || isGenerating}
             onClick={() => setConfirmGen(true)}
-            className="px-4 py-2 rounded-lg bg-amber-600 text-white disabled:opacity-50"
+            className="px-4 py-2 rounded-lg bg-gold text-ink disabled:opacity-50"
           >
             继续生图（只补失败页）
           </button>
@@ -643,7 +643,7 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
               publishBlocked ? `不可发布：${blockedReasons.join('；')}` : undefined
             }
             onClick={handlePublish}
-            className="px-4 py-2 rounded-lg bg-green-600 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-4 py-2 rounded-lg bg-sage text-white disabled:opacity-50 disabled:cursor-not-allowed"
           >
             审批发布
           </button>
@@ -654,12 +654,12 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
         >
           刷新
         </button>
-        {/* 配音（TTS）：独立按钮，violet 区别于生图 indigo */}
+        {/* 配音（TTS）：独立按钮，暖金区别于生图赤陶 */}
         <button
           disabled={busyTts || isGeneratingTts}
           onClick={() => setConfirmTtsOpen(true)}
           title="始终新建一组配音方案（用于多组对比试听）"
-          className="px-4 py-2 rounded-lg bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-200 hover:bg-violet-200 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="px-4 py-2 rounded-lg bg-[#f6e6c8] text-[#8a5a1e] hover:bg-[#efd9ad] disabled:opacity-50 disabled:cursor-not-allowed"
         >
           ＋ 新建配音
         </button>
@@ -670,8 +670,8 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
           title={aiButtonTitle}
           className={`px-4 py-2 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed ${
             aiState === 'resumable'
-              ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-200 hover:bg-amber-200'
-              : 'bg-sky-100 dark:bg-sky-900/40 text-sky-700 dark:text-sky-200 hover:bg-sky-200'
+              ? 'bg-gold-soft text-ink hover:bg-gold/70'
+              : 'bg-brand-soft text-brand hover:bg-brand/20'
           }`}
         >
           {aiButtonText}
@@ -689,14 +689,14 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
             disabled={busyAi}
             onClick={regenerateAllHotspots}
             title="清除全部 AI 热区并重新定位（人工微调保留），会按页数重新调用视觉模型"
-            className="px-3 py-2 rounded-lg bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-200 hover:bg-amber-200 text-xs disabled:opacity-50"
+            className="px-3 py-2 rounded-lg bg-gold-soft text-ink hover:bg-gold/70 text-xs disabled:opacity-50"
           >
             全部重新生成
           </button>
         )}
         <button
           onClick={() => onOpenHotspots(storyId)}
-          className="px-4 py-2 rounded-lg bg-purple-600 text-white hover:bg-purple-700"
+          className="px-4 py-2 rounded-lg bg-brand text-white hover:bg-brand-strong"
         >
           热区设置
         </button>
@@ -708,7 +708,7 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
             window.open(`${base.replace(/\/$/, '')}/book/${storyId}`, '_blank');
           }}
           title="在阅读端打开这本书，用于验证热区与音频效果"
-          className="px-4 py-2 rounded-lg bg-sky-600 text-white hover:bg-sky-700"
+          className="px-4 py-2 rounded-lg bg-brand text-white hover:bg-brand-strong"
         >
           🔗 在阅读器中预览
         </button>
@@ -716,8 +716,8 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
           <span
             className={
               missingHotspots.length === 0
-                ? 'text-xs text-emerald-600 dark:text-emerald-400'
-                : 'text-xs text-amber-600 dark:text-amber-400'
+                ? 'text-xs text-sage'
+                : 'text-xs text-gold'
             }
           >
             已覆盖 {readiness.pages - missingHotspots.length}/{readiness.pages} 页
@@ -804,7 +804,7 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
       )}
 
       {message && (
-        <div className="p-3 rounded-lg border-l-4 border-emerald-400 bg-emerald-50 dark:bg-emerald-900/30 text-sm whitespace-pre-line">
+        <div className="p-3 rounded-lg border-l-4 border-[#9bb38a] bg-sage-soft text-sm whitespace-pre-line">
           {message}
         </div>
       )}
@@ -815,9 +815,9 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
       )}
 
       {/* ===== 配音（TTS）独立区块：进度/方案管理，与生图互不干扰 ===== */}
-      <section className="rounded-2xl border border-violet-200 dark:border-violet-800 bg-violet-50/60 dark:bg-violet-950/30 p-5 space-y-4">
+      <section className="rounded-2xl border border-gold/40 bg-gold-soft p-5 space-y-4">
         <div className="flex items-center justify-between flex-wrap gap-2">
-          <h3 className="text-lg font-bold text-violet-800 dark:text-violet-200">配音方案</h3>
+          <h3 className="text-lg font-bold text-ink">配音方案</h3>
           <span className="text-sm text-gray-500">
             方案数 {audioSets.length}
             {selectedAudioSetId != null && ` · 当前选用 #${selectedAudioSetId}`}
@@ -826,7 +826,7 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
         </div>
 
         {ttsMessage && (
-          <div className="text-sm p-2 rounded-lg border-l-4 border-violet-400 bg-violet-100/60 dark:bg-violet-900/30 whitespace-pre-line">
+          <div className="text-sm p-2 rounded-lg border-l-4 border-[#d9b46a] bg-gold-soft whitespace-pre-line">
             {ttsMessage}
           </div>
         )}
@@ -868,7 +868,7 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
                   key={s.id}
                   className={`rounded-xl border p-3 ${
                     sel
-                      ? 'border-violet-500 bg-violet-100/70 dark:bg-violet-900/50'
+                      ? 'border-gold bg-gold-soft'
                       : 'border-gray-200 dark:border-gray-700'
                   }`}
                 >
@@ -884,13 +884,13 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
                     <button
                       disabled={sel}
                       onClick={() => handleSelectSet(s.id)}
-                      className="text-xs px-3 py-1.5 rounded-lg bg-emerald-600 text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                      className="text-xs px-3 py-1.5 rounded-lg bg-[#6f8f5f] text-white disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       {sel ? '已选用' : '设为选用'}
                     </button>
                     <button
                       onClick={() => setListen({ id: s.id, name: `#${s.id} ${s.name}` })}
-                      className="text-xs px-3 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700"
+                      className="text-xs px-3 py-1.5 rounded-lg bg-gold text-ink hover:bg-gold/90"
                     >
                       试听
                     </button>
@@ -898,7 +898,7 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
                       <button
                         disabled={busyTts || isGeneratingTts}
                         onClick={() => handleResumeSet(s.id)}
-                        className="text-xs px-3 py-1.5 rounded-lg bg-amber-600 text-white disabled:opacity-50"
+                        className="text-xs px-3 py-1.5 rounded-lg bg-gold text-ink disabled:opacity-50"
                       >
                         继续生成
                       </button>
@@ -935,7 +935,7 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
               onClick={() => setTextTab('original')}
               className={`px-3 py-1 text-sm ${
                 textTab === 'original'
-                  ? 'bg-indigo-600 text-white'
+                  ? 'bg-brand text-white'
                   : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300'
               }`}
             >
@@ -945,7 +945,7 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
               onClick={() => setTextTab('refined')}
               className={`px-3 py-1 text-sm ${
                 textTab === 'refined'
-                  ? 'bg-indigo-600 text-white'
+                  ? 'bg-brand text-white'
                   : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300'
               }`}
             >
@@ -998,7 +998,7 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
             <button
               disabled={busy}
               onClick={handleGenerate}
-              className="px-6 py-2 rounded-lg bg-indigo-600 text-white disabled:opacity-50"
+              className="px-6 py-2 rounded-lg bg-brand text-white disabled:opacity-50"
             >
               确认生图
             </button>
@@ -1050,7 +1050,7 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
                 }}
                 className={`px-3 py-1.5 rounded-lg text-sm border ${
                   r.id === activeRunId
-                    ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/40'
+                    ? 'border-brand bg-[#f6e6c8]'
                     : 'border-gray-300 dark:border-gray-600'
                 }`}
               >
@@ -1087,7 +1087,7 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
                 issues = [];
               }
               return (
-                <div className="p-3 rounded-lg border-l-4 border-blue-400 bg-blue-50 dark:bg-blue-900/30 text-sm">
+                <div className="p-3 rounded-lg border-l-4 border-[#d9b46a] bg-[#f6e6c8] text-sm">
                   一致性评估: {sc.is_consistent ? '一致 ✅' : '存在不一致 ⚠️'}（评分{' '}
                   {sc.score?.toFixed(2)}）
                   {issues.length > 0 && (
@@ -1158,7 +1158,7 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
                   setConfirmTtsOpen(false);
                   startTts(true);
                 }}
-                className="px-4 py-2 rounded-lg bg-violet-600 text-white hover:bg-violet-700"
+                className="px-4 py-2 rounded-lg bg-gold text-ink hover:bg-gold/90"
               >
                 确认生成
               </button>

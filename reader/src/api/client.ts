@@ -29,6 +29,7 @@ export interface ApiStoryListItem {
   status: string;
   page_count: number;
   created_at: string | null;
+  cover_url: string | null;
 }
 interface ApiRun {
   id: number;
@@ -55,7 +56,7 @@ export async function getPublishedStories(): Promise<ShelfBook[]> {
     status: s.status,
     pageCount: s.page_count,
     createdAt: s.created_at,
-    coverUrl: null,
+    coverUrl: s.cover_url ?? null,
   }));
 }
 

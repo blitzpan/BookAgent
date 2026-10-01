@@ -17,6 +17,8 @@ export interface StorySummary {
   status: string;
   page_count: number;
   created_at: string | null;
+  // 当前生效版本第 1 页默认图地址（已拼 /assets/ 前缀）；无图时为 null。
+  cover_url: string | null;
   // 配音三态聚合：isGenerating → 配音中；hasAudio → 已配音；否则未配音
   isGenerating: boolean;
   hasAudio: boolean;
@@ -77,6 +79,7 @@ export interface Story {
   generation_config: GenerationConfig | null;
   current_run_id: number | null;
   selected_audio_set_id: number | null;
+  cover_url: string | null;
   created_at: string | null;
   updated_at: string | null;
   deleted_at: string | null;

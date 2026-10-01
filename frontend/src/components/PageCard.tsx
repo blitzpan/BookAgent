@@ -105,7 +105,7 @@ const PageCard: React.FC<Props> = ({
               <div
                 key={c.id}
                 className={`relative flex-shrink-0 w-24 ${
-                  c.is_default ? 'ring-2 ring-indigo-500 rounded' : ''
+                  c.is_default ? 'ring-2 ring-brand rounded' : ''
                 }`}
               >
                 {assetUrl(c.image_path) && (
@@ -118,7 +118,7 @@ const PageCard: React.FC<Props> = ({
                 <button
                   disabled={busyImageId === c.id}
                   onClick={() => onSetDefault(c.id)}
-                  className="mt-1 w-full text-xs px-1 py-0.5 rounded bg-indigo-600 text-white disabled:opacity-50"
+                  className="mt-1 w-full text-xs px-1 py-0.5 rounded bg-brand text-white disabled:opacity-50"
                 >
                   {c.is_default ? '默认' : '设默认'}
                 </button>
@@ -136,7 +136,7 @@ const PageCard: React.FC<Props> = ({
               onClick={() => playSeq(audio.zh)}
               className={`w-9 h-7 rounded-lg text-xs font-medium ${
                 audio.zh.length
-                  ? 'bg-violet-600 text-white hover:bg-violet-700'
+                  ? 'bg-gold text-ink hover:bg-gold/90'
                   : 'border border-dashed border-gray-300 text-gray-400 cursor-not-allowed'
               }`}
               title={audio.zh.length ? '试听中文配音' : '该方案此页暂无中文配音'}
@@ -148,7 +148,7 @@ const PageCard: React.FC<Props> = ({
               onClick={() => playSeq(audio.en)}
               className={`w-9 h-7 rounded-lg text-xs font-medium ${
                 audio.en.length
-                  ? 'bg-violet-600 text-white hover:bg-violet-700'
+                  ? 'bg-gold text-ink hover:bg-gold/90'
                   : 'border border-dashed border-gray-300 text-gray-400 cursor-not-allowed'
               }`}
               title={audio.en.length ? '试听英文配音' : '该方案此页暂无英文配音'}
@@ -161,7 +161,7 @@ const PageCard: React.FC<Props> = ({
         <button
           disabled={busyPageId === p.id}
           onClick={() => onGenerateNew(p.id)}
-          className="mt-auto text-sm px-3 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+          className="mt-auto text-sm px-3 py-2 rounded-lg bg-sage text-white hover:bg-sage/90 disabled:opacity-50"
         >
           {busyPageId === p.id ? '生成中…' : '生成新候选图'}
         </button>
@@ -175,7 +175,7 @@ const PageCard: React.FC<Props> = ({
         <button
           onClick={() => fileRef.current?.click()}
           title="上传本地图片作为本页插图（不触发 AI 生图）"
-          className="mt-auto text-sm px-3 py-2 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 disabled:opacity-50"
+          className="mt-auto text-sm px-3 py-2 rounded-lg bg-gold-soft text-ink hover:bg-gold/70 disabled:opacity-50"
         >
           {uploading ? '上传中…' : '上传图片'}
         </button>

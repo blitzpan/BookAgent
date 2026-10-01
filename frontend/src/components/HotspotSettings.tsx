@@ -385,7 +385,7 @@ const HotspotSettings: React.FC<Props> = ({ storyId, onBack }) => {
           <button
             onClick={() => page && persist(page.pageNumber)}
             disabled={busy}
-            className="px-4 py-2 rounded-lg bg-indigo-600 text-white disabled:opacity-50"
+            className="px-4 py-2 rounded-lg bg-brand text-white disabled:opacity-50"
           >
             保存本页
           </button>
@@ -400,7 +400,7 @@ const HotspotSettings: React.FC<Props> = ({ storyId, onBack }) => {
       </div>
 
       {msg && (
-        <div className="p-3 rounded-lg border-l-4 border-emerald-400 bg-emerald-50 dark:bg-emerald-900/30 text-sm">
+        <div className="p-3 rounded-lg border-l-4 border-emerald-400 bg-sage-soft text-sm">
           {msg}
         </div>
       )}
@@ -444,8 +444,8 @@ const HotspotSettings: React.FC<Props> = ({ storyId, onBack }) => {
                 <span
                   className={
                     pageHotspots.length === 0
-                      ? ' ml-2 text-amber-600 dark:text-amber-400'
-                      : ' ml-2 text-emerald-600 dark:text-emerald-400'
+                      ? ' ml-2 text-gold'
+                      : ' ml-2 text-sage'
                   }
                 >
                   · {pageHotspots.length} 个热区
@@ -559,7 +559,7 @@ const HotspotSettings: React.FC<Props> = ({ storyId, onBack }) => {
                   e.dataTransfer.setData('text/plain', data);
                   e.dataTransfer.effectAllowed = 'copy';
                 }}
-                className="group rounded-lg border border-violet-200 dark:border-violet-800 bg-violet-50/60 dark:bg-violet-950/30 p-3 cursor-grab active:cursor-grabbing hover:border-violet-400"
+                className="group rounded-lg border border-gold/40 bg-gold-soft p-3 cursor-grab active:cursor-grabbing hover:border-violet-400"
               >
                 <div className="text-sm">
                   <div className="text-gray-800 dark:text-gray-100">{s.textZh}</div>
@@ -576,7 +576,7 @@ const HotspotSettings: React.FC<Props> = ({ storyId, onBack }) => {
                   <button
                     onClick={() => playUrl(s.audioUrls.en)}
                     disabled={!s.audioUrls.en}
-                    className="px-2 py-1 rounded-md bg-indigo-600 text-white text-xs disabled:opacity-40"
+                    className="px-2 py-1 rounded-md bg-brand text-white text-xs disabled:opacity-40"
                   >
                     ▶ 播放英文
                   </button>
