@@ -537,6 +537,67 @@ function buildJudgeValue(ctx: RequestCtx, props: Record<string, any>) {
   return out;
 }
 
+// ============================ 草稿旁路：主题生成 / 多轮优化 ============================
+
+const cjkLen = (s: string): number => s.replace(/[^\u4e00-\u9fa5]/g, "").length;
+
+/** 取 marker 之后的文本；找不到就返回原文。 */
+function cutAfter(text: string, marker: RegExp): string {
+  const m = marker.exec(text);
+  return (m ? text.slice(m.index + m[0].length) : text).trim();
+}
+
+/** 补句号，便于后面继续拼接句子。 */
+function ensureStop(s: string): string {
+  return /[。！？!?；;]$/.test(s) ? s : `${s}。`;
+}
+
+// 生成/优化阶段不按页数控篇幅（页数归「改写」），用固定当量让 mock 产出稳定长度。
+const DRAFT_TARGET_CHARS = 360;
+
+/** 主题生成：用真实主题开头，按固定当量补过渡句（每句只用一次），再收尾。 */
+function buildGenerateValue(ctx: RequestCtx) {
+  const theme =
+    ensureStop(cutAfter(ctx.user, /主题与要求[：:]/)) || "一个小家伙开始了它的一天。";
+
+  let story = theme;
+  for (const sentence of PAD_SENTENCES) {
+    if (cjkLen(story) >= DRAFT_TARGET_CHARS) break;
+    story += sentence;
+  }
+  return { story: `${story}最后，一切慢慢变好，它安心地闭上了眼睛。` };
+}
+
+/** 取 header 之后、下一个【…】小节之前的文本。 */
+function sectionAfter(text: string, header: string): string {
+  const start = text.indexOf(header);
+  if (start < 0) return "";
+  const rest = text.slice(start + header.length);
+  const next = rest.indexOf("【");
+  return (next < 0 ? rest : rest.slice(0, next)).trim();
+}
+
+/** 多轮优化：反馈含缩短意图则截断到固定当量，否则追加一句以体现「已修订」。 */
+function buildOptimizeValue(ctx: RequestCtx) {
+  const current =
+    sectionAfter(ctx.user, "【当前故事】") || "一个小家伙开始了它的一天。";
+  const feedback = sectionAfter(ctx.user, "【本轮修改要求】");
+
+  if (/缩短|精简|压缩|压到|更短/.test(feedback)) {
+    const kept: string[] = [];
+    let len = 0;
+    for (const sentence of splitSentences(current)) {
+      if (len + cjkLen(sentence) > DRAFT_TARGET_CHARS) break;
+      kept.push(sentence);
+      len += cjkLen(sentence);
+    }
+    return { story: kept.join("") || current };
+  }
+
+  const extra = PAD_SENTENCES[feedback.length % PAD_SENTENCES.length];
+  return { story: `${ensureStop(current)}${extra}` };
+}
+
 // ============================ 后端实现 ============================
 
 export function createMockBackend(): ModelBackend {
@@ -563,6 +624,11 @@ export function createMockBackend(): ModelBackend {
         explicit = buildSafetyValue(ctx, props);
       } else if (props.isAcceptable || props.isConsistent || props.score) {
         explicit = buildJudgeValue(ctx, props);
+      } else if (props.story) {
+        // 草稿旁路（新建故事弹窗）：用结构化标记分派，不依赖提示词措辞
+        explicit = ctx.user.includes("[[DRAFT_OPTIMIZE]]")
+          ? buildOptimizeValue(ctx)
+          : buildGenerateValue(ctx);
       }
 
       return explicit ? { ...generic, ...explicit } : generic;

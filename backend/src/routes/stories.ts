@@ -13,6 +13,14 @@ import { STORY_STATUS } from "../constants/status";
 import { mergeGenerationConfig } from "../constants/generationConfig";
 import { hasActiveTaskForStory, getActiveTasksForStory } from "../services/generationService";
 import { listAudioSets, getSelectedAudioSetId } from "../services/ttsService";
+import {
+  generateStoryFromTheme,
+  optimizeStory,
+} from "../services/geminiService";
+
+// 自由文本入参上限：提示词层的「边界」只是软防护，代码层再兜一道，
+// 避免超长输入撑爆上下文或被用来注入指令。
+const MAX_DRAFT_INPUT = 2000;
 
 export function registerStoryRoutes(app: FastifyInstance): void {
   // 建故事
@@ -35,6 +43,52 @@ export function registerStoryRoutes(app: FastifyInstance): void {
       inspiration_image_path: body.inspiration_image,
     });
     return reply.code(201).send(result);
+  });
+
+  // 草稿旁路（不落库）：主题 → 完整故事。与改写共用 TEXT 后端。
+  // 只收主题：页数归「改写」，画风归「生图」，标题属于故事属性，都不在此处使用。
+  app.post("/api/story-draft/generate", async (req, reply) => {
+    const body = req.body as { theme?: string };
+    if (!body?.theme || !body.theme.trim()) {
+      return reply.code(400).send({ error: "theme 不能为空" });
+    }
+    if (body.theme.length > MAX_DRAFT_INPUT) {
+      return reply.code(400).send({ error: `theme 过长（上限 ${MAX_DRAFT_INPUT} 字符）` });
+    }
+    try {
+      const { story } = await generateStoryFromTheme(body.theme);
+      return reply.send({ story });
+    } catch (err: any) {
+      return reply.code(400).send({ error: err?.message ?? String(err) });
+    }
+  });
+
+  // 草稿旁路（不落库）：故事 + 本轮修改要求（+ 已生效要求）→ 修订后的故事，可多轮迭代。
+  app.post("/api/story-draft/optimize", async (req, reply) => {
+    const body = req.body as {
+      story?: string;
+      feedback?: string;
+      applied_feedback?: unknown;
+    };
+    if (!body?.story || !body.story.trim()) {
+      return reply.code(400).send({ error: "story 不能为空" });
+    }
+    if (!body?.feedback || !body.feedback.trim()) {
+      return reply.code(400).send({ error: "feedback 不能为空" });
+    }
+    if (body.feedback.length > MAX_DRAFT_INPUT) {
+      return reply.code(400).send({ error: `feedback 过长（上限 ${MAX_DRAFT_INPUT} 字符）` });
+    }
+    // 已生效的修改要求：只取字符串，最多保留最近 5 条，避免多轮后上下文无限膨胀
+    const applied = Array.isArray(body.applied_feedback)
+      ? body.applied_feedback.filter((x): x is string => typeof x === "string").slice(-5)
+      : [];
+    try {
+      const { story } = await optimizeStory(body.story, body.feedback, applied);
+      return reply.send({ story });
+    } catch (err: any) {
+      return reply.code(400).send({ error: err?.message ?? String(err) });
+    }
   });
 
   // 改写（safety → refine → parse），同步返回

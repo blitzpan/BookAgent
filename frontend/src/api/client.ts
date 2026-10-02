@@ -61,6 +61,14 @@ export const api = {
     user_title?: string;
     inspiration_image?: string;
   }) => request<{ id: number }>('POST', '/api/stories', input),
+  // ===== 草稿旁路：主题生成 / 多轮优化（不落库，纯文本生成）=====
+  generateStory: (input: { theme: string }) =>
+    request<{ story: string }>('POST', '/api/story-draft/generate', input),
+  optimizeStory: (input: {
+    story: string;
+    feedback: string;
+    applied_feedback?: string[];
+  }) => request<{ story: string }>('POST', '/api/story-draft/optimize', input),
   getStory: (id: number) =>
     request<
       { story: Story; pages: Page[]; segment_count: number } & StoryAudioState
