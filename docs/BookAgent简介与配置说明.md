@@ -132,7 +132,7 @@ BAILIAN_API_KEY=你的百炼/DashScope Key
 - Seedream / Ark：最多 10 张/页；百炼最多 9 张/页（均由 `backend.maxRefs` 控制，`geminiService.generateImage` 自动截断）；**全部为角色锚图，不再含上一页整图**
 - 超出会自动截断，不会报错。
 
-完整 env 变量速查见 `backend/.env.example`；由 `backend/src/env.ts` 在启动时按 `backend/.env.local` > 仓库根 `.env.local` > `backend/.env` > 仓库根 `.env` 自动加载（前端 `vite.config.ts` 已无 `define` 注入）。
+完整 env 变量速查见 `backend/.env.example`；由 `backend/src/env.ts` 在启动时按 `backend/.env.local` > 仓库根 `.env.local` > `backend/.env` > 仓库根 `.env` 自动加载。前端 `frontend/vite.config.ts` 仍通过 `define` 注入 `VITE_READER_BASE`（阅读端地址，默认 `http://localhost:5173`），但模型 Key 等均由后端 `env.ts` 加载，不经 Vite `define`——即不存在「VITE_ 不注入」的坑。
 
 ### 2.4 CORS / 端点
 所有模型调用都在 **backend（Node）进程内**发出，不经浏览器，因此**不存在浏览器 CORS 问题**，也不需要 Vite 代理国内 API（`frontend/vite.config.ts` 只代理 `/api` 与 `/assets`）。
