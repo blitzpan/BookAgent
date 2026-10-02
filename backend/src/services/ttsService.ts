@@ -562,7 +562,7 @@ export function getBookAudio(
             seq: 0,
             role: "narration",
             speaker: null,
-            speakerEn: null,
+            speaker_en: null,
             text_zh: page.text_zh || "",
             text_en: page.text_en || "",
           },

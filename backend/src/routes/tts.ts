@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import fs from "node:fs";
 import path from "node:path";
+import { EdgeTTS } from "edge-tts-universal";
 import { db, DATA_DIR } from "../db/sqlite";
 import { getStoryRaw } from "../services/storyService";
 import { createTask } from "../services/generationService";
@@ -16,6 +17,14 @@ import {
   type AudioSetConfig,
   type Lang,
 } from "../services/ttsService";
+import {
+  ensureCasting,
+  getSpeakerVoices,
+  resolveAudioSetConfig,
+  saveSpeakerVoices,
+  type CastSlot,
+} from "../services/voiceCastingService";
+import { getVoicePool } from "../services/voicePoolService";
 
 const RESUMABLE = ["interrupted", "failed"];
 
@@ -37,14 +46,25 @@ export function registerTtsRoutes(app: FastifyInstance): void {
       forceNew?: boolean;
     };
     const langs = body.langs && body.langs.length ? body.langs : (["zh", "en"] as Lang[]);
-    const config: AudioSetConfig = { ...(body.config || {}), langs };
 
-    // 并发防重：本故事已有 generating 的方案 → 拒绝
+    // 并发防重：本故事已有 generating 的方案 → 拒绝（先判重，避免无谓地跑一次 AI 选角）
     if (hasGeneratingAudioSet(id)) {
       return reply
         .code(409)
         .send({ error: "该故事已有进行中的配音任务，请稍候或刷新查看进度" });
     }
+
+    // 首次生成（或尚无配置）时自动跑一次 AI 选角；失败静默降级到兜底音色，不阻断配音。
+    try {
+      await ensureCasting(id);
+    } catch (e: any) {
+      console.error(`[tts] story=${id} 自动选角失败，使用兜底音色:`, e?.message || e);
+    }
+    const config: AudioSetConfig = {
+      ...(body.config || {}),
+      ...resolveAudioSetConfig(id),
+      langs,
+    };
 
     let audioSetId: number;
     const existing = db
@@ -169,5 +189,88 @@ export function registerTtsRoutes(app: FastifyInstance): void {
     if (!setId) return { audioSetId: null, pages: [] };
     const data = getBookAudio(id, setId);
     return data;
+  });
+
+  // 可用音色列表（角色音色下拉用）
+  app.get("/api/tts/voices", async () => {
+    return { pool: getVoicePool() };
+  });
+
+  // 音色试听：用指定音色合成一句示例，返回可播放的音频地址。
+  // 结果按音色缓存到 assets/_voice_preview/{voiceId}_{lang}.mp3，重复试听不重复联网。
+  app.post("/api/tts/preview", async (req, reply) => {
+    const body = (req.body || {}) as { voice?: string; text?: string; lang?: Lang };
+    const voice = String(body.voice || "").trim();
+    if (!voice || !getVoicePool().some((v) => v.id === voice)) {
+      return reply.code(400).send({ error: "未知音色" });
+    }
+    const lang: Lang = body.lang === "en" ? "en" : "zh";
+    const text =
+      String(body.text || "").trim() ||
+      (lang === "zh"
+        ? "今天天气真好，我们一起去看那片会发光的森林吧。"
+        : "What a lovely day. Let's go and see the glowing forest together.");
+
+    const relPath = path
+      .join("assets", "_voice_preview", `${voice}_${lang}.mp3`)
+      .split(path.sep)
+      .join("/");
+    const absPath = path.join(DATA_DIR, relPath);
+
+    if (!fs.existsSync(absPath)) {
+      try {
+        const tts = new EdgeTTS(text, voice, { rate: "+0%", volume: "+0%", pitch: "+0Hz" });
+        const result = await tts.synthesize();
+        const buf = Buffer.from(await result.audio.arrayBuffer());
+        if (!buf.length) throw new Error("合成结果为空（可能被限流或网络不可达）");
+        fs.mkdirSync(path.dirname(absPath), { recursive: true });
+        fs.writeFileSync(absPath, buf);
+      } catch (e: any) {
+        console.error(`[tts] 试听音色 ${voice} 失败:`, e?.message || e);
+        return reply.code(500).send({ error: `试听失败：${e?.message || e}` });
+      }
+    }
+    return { url: `/assets/${relPath.replace(/^assets\//, "")}` };
+  });
+
+  // 读取故事的角色音色配置（含旁白/兜底两行）
+  app.get("/api/stories/:id/speaker-voices", async (req, reply) => {
+    const id = Number((req.params as any).id);
+    if (!Number.isInteger(id)) {
+      return reply.code(400).send({ error: "invalid id" });
+    }
+    return { items: getSpeakerVoices(id), pool: getVoicePool() };
+  });
+
+  // 保存手工选择的角色音色
+  app.put("/api/stories/:id/speaker-voices", async (req, reply) => {
+    const id = Number((req.params as any).id);
+    if (!Number.isInteger(id)) {
+      return reply.code(400).send({ error: "invalid id" });
+    }
+    if (!getStoryRaw(id)) return reply.code(404).send({ error: "故事不存在" });
+    const body = (req.body || {}) as {
+      items?: Array<{ slot: CastSlot; speaker?: string; voiceZh?: string | null; voiceEn?: string | null }>;
+    };
+    if (!Array.isArray(body.items) || !body.items.length) {
+      return reply.code(400).send({ error: "items 不能为空" });
+    }
+    return { items: saveSpeakerVoices(id, body.items), pool: getVoicePool() };
+  });
+
+  // 重新 AI 推荐（覆盖已有角色音色；手工设置过的旁白/兜底行保留）
+  app.post("/api/stories/:id/speaker-voices/recommend", async (req, reply) => {
+    const id = Number((req.params as any).id);
+    if (!Number.isInteger(id)) {
+      return reply.code(400).send({ error: "invalid id" });
+    }
+    if (!getStoryRaw(id)) return reply.code(404).send({ error: "故事不存在" });
+    try {
+      const items = await ensureCasting(id, { force: true });
+      return { items, pool: getVoicePool() };
+    } catch (e: any) {
+      console.error(`[tts] story=${id} 重新推荐音色失败:`, e?.message || e);
+      return reply.code(500).send({ error: `AI 推荐音色失败：${e?.message || e}` });
+    }
   });
 }

@@ -13,6 +13,10 @@ import type {
   Lang,
   Hotspot,
   HotspotInput,
+  VoiceOption,
+  SpeakerVoice,
+  CastSlot,
+  VoicePoolStats,
 } from '../types';
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -166,6 +170,40 @@ export const api = {
         }>;
       }>;
     }>('GET', `/api/stories/${storyId}/book-audio${setId ? `?setId=${setId}` : ''}`),
+  // ===== 角色音色（AI 选角 + 手工调整） =====
+  listVoices: () => request<{ pool: VoiceOption[] }>('GET', '/api/tts/voices'),
+  getSpeakerVoices: (storyId: number) =>
+    request<{ items: SpeakerVoice[]; pool: VoiceOption[] }>(
+      'GET',
+      `/api/stories/${storyId}/speaker-voices`
+    ),
+  saveSpeakerVoices: (
+    storyId: number,
+    items: Array<{ slot: CastSlot; speaker?: string; voiceZh?: string | null; voiceEn?: string | null }>
+  ) =>
+    request<{ items: SpeakerVoice[]; pool: VoiceOption[] }>(
+      'PUT',
+      `/api/stories/${storyId}/speaker-voices`,
+      { items }
+    ),
+  recommendSpeakerVoices: (storyId: number) =>
+    request<{ items: SpeakerVoice[]; pool: VoiceOption[] }>(
+      'POST',
+      `/api/stories/${storyId}/speaker-voices/recommend`
+    ),
+  previewVoice: (voice: string, lang: 'zh' | 'en' = 'zh') =>
+    request<{ url: string }>('POST', '/api/tts/preview', { voice, lang }),
+  // ===== 设置：TTS 音色库 =====
+  getVoicePool: () =>
+    request<{ pool: VoiceOption[]; stats: VoicePoolStats }>(
+      'GET',
+      '/api/settings/tts-voices'
+    ),
+  refreshVoicePool: () =>
+    request<{ ok: true; pool: VoiceOption[]; stats: VoicePoolStats }>(
+      'POST',
+      '/api/settings/tts-voices/refresh'
+    ),
   // ===== 图片热区 =====
   listHotspots: (storyId: number) =>
     request<{ hotspots: Hotspot[] }>('GET', `/api/stories/${storyId}/hotspots`),

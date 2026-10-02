@@ -43,8 +43,49 @@ export type AudioSetStatus = 'pending' | 'generating' | 'completed' | 'interrupt
 export type Lang = 'zh' | 'en';
 
 export interface AudioSetConfig {
+  /** 按 role（narration/dialogue/...）指定音色。 */
   voices?: Partial<Record<string, Partial<Record<Lang, string>>>>;
+  /** 按角色名指定音色（优先级高于 voices）。 */
+  voicesBySpeaker?: Record<string, Partial<Record<Lang, string>>>;
   langs?: Lang[];
+}
+
+// ===================== 音色 / 角色选角 =====================
+export type VoiceCategory = 'mandarin' | 'dialect' | 'english';
+
+/** 一条可用音色（来自「设置 → 更新音色」经 AI 筛选后的池，或内置默认池）。 */
+export interface VoiceOption {
+  id: string;
+  label: string;
+  gender: 'male' | 'female';
+  child?: boolean;
+  tags: string[];
+  locale?: string;
+  category?: VoiceCategory;
+}
+
+/** narration=旁白音色，fallback=其余角色兜底音色，character=具体角色专属音色。 */
+export type CastSlot = 'narration' | 'fallback' | 'character';
+
+export interface SpeakerVoice {
+  slot: CastSlot;
+  speaker: string;
+  speakerEn: string | null;
+  voiceZh: string | null;
+  voiceEn: string | null;
+  altVoices: string[];
+  lineCount: number;
+  source: string; // 'ai' | 'manual' | 'fallback'
+  reason: string | null;
+}
+
+export interface VoicePoolStats {
+  total: number;
+  mandarin: number;
+  dialect: number;
+  english: number;
+  updatedAt: string | null;
+  source: 'ai' | 'builtin';
 }
 
 export interface AudioSet {

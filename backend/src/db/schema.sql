@@ -144,6 +144,21 @@ CREATE TABLE IF NOT EXISTS page_segments (
 );
 CREATE INDEX IF NOT EXISTS idx_seg_page ON page_segments(page_id, seq);
 
+-- 可用音色池：由「设置 → 更新音色」拉取微软全量列表后经 AI 筛选落库。
+-- 运行时不再联网；表为空时回落内置默认池（constants/voices.ts）。
+CREATE TABLE IF NOT EXISTS tts_voice_pool (
+  id          INTEGER PRIMARY KEY,
+  voice_id    TEXT NOT NULL UNIQUE,        -- 如 zh-CN-YunxiNeural
+  locale      TEXT,                        -- zh-CN / zh-HK / en-US ...
+  label       TEXT,                        -- 中文展示名，如「云希（男·温暖）」
+  gender      TEXT,                        -- male | female
+  child       INTEGER DEFAULT 0,           -- 1=童声
+  tags_json   TEXT,                        -- JSON 数组：气质标签，如 ["温柔","叙述"]
+  category    TEXT,                        -- 'mandarin' | 'dialect' | 'english'
+  updated_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_voice_pool_cat ON tts_voice_pool(category);
+
 -- 配音方案（语音组）：一个故事可有多组，不同人物/音色；后台试听后选一组作为正式版
 CREATE TABLE IF NOT EXISTS audio_sets (
   id          INTEGER PRIMARY KEY,
@@ -174,6 +189,28 @@ CREATE TABLE IF NOT EXISTS page_audio (
   UNIQUE(audio_set_id, page_id, segment_id, lang, scene)
 );
 CREATE INDEX IF NOT EXISTS idx_audio_page ON page_audio(audio_set_id, page_id, lang);
+
+-- 故事级角色音色配置（跨配音方案复用）：重要角色专属音色 + 兜底音色。
+-- slot='narration'|'fallback' 时 speaker 为空串，分别表示「旁白音色」「其余角色兜底音色」；
+-- slot='character' 时 speaker 为中文角色名（来自 page_segments.speaker）。
+CREATE TABLE IF NOT EXISTS story_speaker_voices (
+  id              INTEGER PRIMARY KEY,
+  story_id        INTEGER NOT NULL,
+  slot            TEXT NOT NULL,               -- 'narration' | 'fallback' | 'character'
+  speaker         TEXT NOT NULL DEFAULT '',    -- slot='character' 时为角色中文名，其余 ''
+  speaker_en      TEXT,
+  voice_zh        TEXT,
+  voice_en        TEXT,
+  alt_voices_json TEXT,                        -- JSON 数组：AI 备选音色（≤2）
+  line_count      INTEGER DEFAULT 0,           -- 角色台词数，用于「重要角色」判定与 UI 展示
+  sort_order      INTEGER DEFAULT 0,
+  source          TEXT DEFAULT 'ai',           -- 'ai' | 'manual' | 'fallback'
+  reason          TEXT,
+  created_at      TEXT,
+  updated_at      TEXT,
+  UNIQUE(story_id, slot, speaker)
+);
+CREATE INDEX IF NOT EXISTS idx_speaker_voices_story ON story_speaker_voices(story_id);
 
 -- 图片热区：按 page_number 归属（规避 pages 改写重建导致 page_id 悬挂）。
 -- 只存中心点 (x,y) 归一化 0~1；尺寸不入库，由 label 文案渲染时自动推导。

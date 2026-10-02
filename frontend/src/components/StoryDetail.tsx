@@ -17,6 +17,7 @@ import { AudioPlanModal } from './AudioPlanModal';
 import { DEFAULT_GENERATION_CONFIG } from '../constants';
 import PageCard from './PageCard';
 import AnchorGallery from './AnchorGallery';
+import SpeakerVoicePanel from './SpeakerVoicePanel';
 
 interface Props {
   storyId: number;
@@ -206,6 +207,8 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
   const [ttsMessage, setTtsMessage] = useState<string | null>(null);
   const [ttsError, setTtsError] = useState<string | null>(null);
   const [busyTts, setBusyTts] = useState(false);
+  // 角色音色面板在每次新建配音后重新加载（后端可能刚跑过一次 AI 选角）
+  const [voicePanelKey, setVoicePanelKey] = useState(0);
   // S17：新建配音前的成本预估确认框
   const [confirmTtsOpen, setConfirmTtsOpen] = useState(false);
   // ===== 热区（AI 一键生成，异步任务）状态 =====
@@ -378,6 +381,7 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
       setTtsTask(task);
       setTtsMessage(`已创建配音任务 #${taskId}（方案 #${audioSetId}），后台合成中…`);
       await loadAudio();
+      setVoicePanelKey((k) => k + 1);
       onChanged();
     } catch (e: any) {
       setTtsError(e?.message ?? String(e));
@@ -1138,6 +1142,9 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
           if (bits.length === 0) return null;
           return <p className="text-sm text-muted-strong -mt-2">{bits.join(' · ')}</p>;
         })()}
+
+        {/* 角色音色：AI 推荐 + 手动改写；新建配音时按这里的配置合成 */}
+        <SpeakerVoicePanel storyId={storyId} key={voicePanelKey} />
 
         {ttsMessage && (
           <div className="text-sm p-2 rounded-lg border-l-4 border-[#d9b46a] bg-gold-soft whitespace-pre-line">
