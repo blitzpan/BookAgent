@@ -1,6 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { api, assetUrl } from '../api/client';
 import { DEFAULT_GENERATION_CONFIG } from '../constants';
+import { joinStyle, parseStyle } from '../style';
+import ConfigSection from './ConfigSection';
+import StylePicker from './StylePicker';
+import Lightbox from './Lightbox';
 import type { GenerationConfig, Story } from '../types';
 
 interface Props {
@@ -25,41 +29,6 @@ const SIZE_OPTIONS: Array<{ value: string; label: string }> = [
   { value: '2K', label: '2K（清晰 · 推荐）' },
   { value: '4K', label: '4K（最清晰 · 慢 · 贵）' },
 ];
-
-// 画风预设（中文标签，可多选组合）。label 必须与后端 constants/style.ts 的中文键一致，
-// 后端在生图/改写时才转成英文喂给图像模型。
-const STYLE_PRESETS = [
-  '水彩手绘',
-  '治愈系扁平',
-  '卡通3D',
-  '铅笔素描',
-  '复古绘本插画',
-  '厚涂插画',
-  '国风水墨',
-  '梦核柔和',
-  '温暖治愈',
-  '奇幻冒险',
-  '清新自然',
-  '俏皮可爱',
-];
-
-const STYLE_KNOWN = new Set(STYLE_PRESETS);
-
-// 把库里存储的 style（中文标签 / 自定义原文混合）解析成「已选预设 + 自定义片段」。
-function parseStyle(raw?: string | null): { sel: string[]; custom: string } {
-  if (!raw) return { sel: [], custom: '' };
-  const sel: string[] = [];
-  const custom: string[] = [];
-  raw
-    .split(/[，,、]/)
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .forEach((p) => {
-      if (STYLE_KNOWN.has(p)) sel.push(p);
-      else custom.push(p);
-    });
-  return { sel, custom: custom.join('，') };
-}
 
 // 重试类参数（0–1 阈值改用滑块单独渲染，这里只留整数计数项）。
 const RETRY_FIELDS: Array<{
@@ -105,17 +74,7 @@ function readAsDataUrl(file: File): Promise<string> {
   });
 }
 
-function Section({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
-  return (
-    <div className="mb-5">
-      <div className="flex items-baseline justify-between mb-2">
-        <h4 className="text-sm font-bold text-ink">{title}</h4>
-      </div>
-      {hint && <p className="text-xs text-muted mb-2">{hint}</p>}
-      {children}
-    </div>
-  );
-}
+
 
 const StoryConfigPanel: React.FC<Props> = ({ story, onSaved }) => {
   const [userTitle, setUserTitle] = useState(story.user_title ?? '');
@@ -131,6 +90,7 @@ const StoryConfigPanel: React.FC<Props> = ({ story, onSaved }) => {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [zoom, setZoom] = useState<string | null>(null);
 
   useEffect(() => {
     setUserTitle(story.user_title ?? '');
@@ -155,7 +115,7 @@ const StoryConfigPanel: React.FC<Props> = ({ story, onSaved }) => {
     try {
       let inspiration_image: string | undefined;
       if (file) inspiration_image = await readAsDataUrl(file);
-      const styleValue = [...selectedStyles, customStyle.trim()].filter(Boolean).join('，');
+      const styleValue = joinStyle(selectedStyles, customStyle);
       await api.updateStory(story.id, {
         user_title: userTitle,
         style: styleValue,
@@ -182,13 +142,14 @@ const StoryConfigPanel: React.FC<Props> = ({ story, onSaved }) => {
       </p>
 
       {/* 基础信息 */}
-      <Section title="基础信息">
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <ConfigSection title="基础信息">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <label className="text-sm text-muted flex flex-col gap-1">
             标题
             <input
               value={userTitle}
               onChange={(e) => setUserTitle(e.target.value)}
+              placeholder="留空则显示「故事 #ID」"
               className="px-2 py-1 border border-line rounded-lg bg-white text-ink focus-warm"
             />
           </label>
@@ -197,8 +158,9 @@ const StoryConfigPanel: React.FC<Props> = ({ story, onSaved }) => {
             <div className="flex items-center gap-2">
               <button
                 type="button"
+                aria-label="减少页数"
                 onClick={() => setPageCount(Math.max(1, pageCount - 1))}
-                className="w-8 h-8 rounded-lg border border-line bg-white text-ink hover:bg-paper-2"
+                className="w-9 h-9 rounded-lg border border-line bg-white text-ink hover:bg-paper-2 cursor-pointer focus-warm"
               >
                 −
               </button>
@@ -215,54 +177,29 @@ const StoryConfigPanel: React.FC<Props> = ({ story, onSaved }) => {
               />
               <button
                 type="button"
+                aria-label="增加页数"
                 onClick={() => setPageCount(Math.min(20, pageCount + 1))}
-                className="w-8 h-8 rounded-lg border border-line bg-white text-ink hover:bg-paper-2"
+                className="w-9 h-9 rounded-lg border border-line bg-white text-ink hover:bg-paper-2 cursor-pointer focus-warm"
               >
                 +
               </button>
             </div>
           </label>
-          <label className="text-sm text-muted flex flex-col gap-1">
-            画风 / 语气（自定义补充，建议英文）
-            <input
-              value={customStyle}
-              onChange={(e) => setCustomStyle(e.target.value)}
-              placeholder="可补充英文关键词，如：soft lighting, detailed"
-              className="px-2 py-1 border border-line rounded-lg bg-white text-ink focus-warm"
-            />
-          </label>
         </div>
         <div className="mt-2">
-          <p className="text-xs text-muted mb-1">常用画风（可多选，自动组合）</p>
-          <div className="flex flex-wrap gap-2">
-            {STYLE_PRESETS.map((p) => {
-              const on = selectedStyles.includes(p);
-              return (
-                <button
-                  type="button"
-                  key={p}
-                  onClick={() =>
-                    setSelectedStyles((prev) =>
-                      prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]
-                    )
-                  }
-                  className={`px-3 py-1 rounded-full text-xs border transition ${
-                    on
-                      ? 'border-brand bg-[#f6e6c8] text-ink'
-                      : 'border-line text-muted hover:border-brand'
-                  }`}
-                >
-                  {on ? '✓ ' : ''}
-                  {p}
-                </button>
-              );
-            })}
-          </div>
+          <StylePicker
+            selected={selectedStyles}
+            custom={customStyle}
+            onChange={(sel, c) => {
+              setSelectedStyles(sel);
+              setCustomStyle(c);
+            }}
+          />
         </div>
-      </Section>
+      </ConfigSection>
 
       {/* 生图质量 */}
-      <Section
+      <ConfigSection
         title="生图质量"
         hint="阈值越高、重试越多越精细，但生图调用次数与费用也越多。"
       >
@@ -331,10 +268,10 @@ const StoryConfigPanel: React.FC<Props> = ({ story, onSaved }) => {
             </label>
           ))}
         </div>
-      </Section>
+      </ConfigSection>
 
       {/* 输出规格 */}
-      <Section title="输出规格">
+      <ConfigSection title="输出规格">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <label className="text-sm text-muted flex flex-col gap-1">
             出图比例
@@ -365,17 +302,25 @@ const StoryConfigPanel: React.FC<Props> = ({ story, onSaved }) => {
             </select>
           </label>
         </div>
-      </Section>
+      </ConfigSection>
 
       {/* 灵感图 */}
-      <Section title="灵感图">
+      <ConfigSection title="灵感图" hint="可选，仅用于分页阶段；不参与生图。">
         <div className="flex items-start gap-3">
           {inspirationUrl ? (
-            <img
-              src={inspirationUrl}
-              alt="灵感图"
-              className="w-24 h-24 object-cover rounded-lg border border-line"
-            />
+            <button
+              type="button"
+              onClick={() => setZoom(inspirationUrl)}
+              aria-label="放大查看灵感图"
+              title="点击放大查看"
+              className="block w-24 h-24 cursor-zoom-in"
+            >
+              <img
+                src={inspirationUrl}
+                alt="灵感图"
+                className="w-24 h-24 object-cover rounded-lg border border-line"
+              />
+            </button>
           ) : (
             <div className="w-24 h-24 flex items-center justify-center text-xs text-muted rounded-lg border border-dashed border-line">
               未设置
@@ -385,10 +330,10 @@ const StoryConfigPanel: React.FC<Props> = ({ story, onSaved }) => {
             type="file"
             accept="image/*"
             onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            className="block text-sm text-muted"
+            className="block text-sm text-muted cursor-pointer"
           />
         </div>
-      </Section>
+      </ConfigSection>
 
       {msg && <p className="text-emerald-600 text-sm mb-2">{msg}</p>}
       {err && <p className="text-red-500 text-sm mb-2">{err}</p>}
@@ -397,11 +342,12 @@ const StoryConfigPanel: React.FC<Props> = ({ story, onSaved }) => {
         <button
           disabled={busy}
           onClick={handleSave}
-          className="px-6 py-2 rounded-lg bg-brand text-white disabled:opacity-50"
+          className="inline-flex items-center justify-center min-h-[44px] px-6 rounded-xl font-semibold text-white bg-brand hover:bg-brand-strong cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-warm transition-colors duration-200"
         >
           保存配置
         </button>
       </div>
+      {zoom && <Lightbox src={zoom} onClose={() => setZoom(null)} />}
     </div>
   );
 };

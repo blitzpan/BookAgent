@@ -27,12 +27,101 @@ interface Props {
 
 const ACTIVE = new Set(['queued', 'running']);
 
+// 操作按钮：统一 44px 触控高度、光标、焦点态（与绘本库列表页同一套）
+const ACTION_BASE =
+  'inline-flex items-center justify-center gap-2 h-11 px-4 rounded-xl text-sm font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-warm transition-colors duration-200';
+const ACTION_PRIMARY = `${ACTION_BASE} bg-brand text-white hover:bg-brand-strong`;
+const ACTION_GHOST = `${ACTION_BASE} bg-paper-3 text-ink hover:bg-line`;
+const ACTION_SAGE = `${ACTION_BASE} bg-sage text-white hover:bg-sage/90`;
+const ACTION_GOLD = `${ACTION_BASE} bg-gold-soft text-[#8a5a1e] hover:bg-[#efd9ad]`;
+const ACTION_DANGER = `${ACTION_BASE} bg-[#b3453a] text-white hover:bg-[#97382f]`;
+// 卡片内小按钮：36px（密度优先），仍保留光标与焦点态
+const SMALL_BASE =
+  'inline-flex items-center justify-center h-9 px-3 rounded-lg text-xs font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed focus-warm transition-colors duration-200';
+const SMALL_SAGE = `${SMALL_BASE} bg-sage text-white hover:bg-sage/90`;
+const SMALL_GOLD = `${SMALL_BASE} bg-gold text-ink hover:bg-gold/90`;
+const SMALL_DANGER = `${SMALL_BASE} bg-[#b3453a] text-white hover:bg-[#97382f]`;
+
+// 区块卡片外壳：统一圆角/描边/阴影；scroll-mt 给锚点跳转留出余量
+const SECTION = 'rounded-xl2 border border-line bg-white p-5 shadow-card scroll-mt-24';
+
+/** 区块标题行：左侧标题 + 说明，右侧该区块的主操作（按生产流水线分组）。 */
+function SectionHead({
+  title,
+  desc,
+  children,
+}: {
+  title: string;
+  desc?: string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+      <div className="min-w-0">
+        <h3 className="font-display text-lg font-bold text-ink">{title}</h3>
+        {desc && <p className="text-sm text-muted-strong mt-0.5 leading-relaxed">{desc}</p>}
+      </div>
+      {children && <div className="flex flex-wrap items-center gap-2">{children}</div>}
+    </div>
+  );
+}
+
+// 锚点导航（顺序与页面区块顺序一致）
+const SECTION_NAV: { id: string; label: string }[] = [
+  { id: 'sec-text', label: '文本' },
+  { id: 'sec-image', label: '图像' },
+  { id: 'sec-audio', label: '配音' },
+  { id: 'sec-hotspot', label: '热区' },
+  { id: 'sec-publish', label: '发布检查' },
+];
+
+/** 平滑滚动到区块，尊重 prefers-reduced-motion。 */
+function scrollToSection(id: string) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+}
+
+// ---- 图标（统一 24x24 线性 SVG，不用 emoji） ----
+const Icon = ({ d, className = 'w-4 h-4' }: { d: string; className?: string }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={2}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    aria-hidden="true"
+  >
+    <path d={d} />
+  </svg>
+);
+const CheckIcon = (p: { className?: string }) => <Icon className={p.className} d="M20 6 9 17l-5-5" />;
+const CrossIcon = (p: { className?: string }) => (
+  <Icon className={p.className} d="M18 6 6 18M6 6l12 12" />
+);
+const WarnIcon = (p: { className?: string }) => (
+  <Icon className={p.className} d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+);
+const PlusIcon = (p: { className?: string }) => <Icon className={p.className} d="M12 5v14M5 12h14" />;
+const SparkIcon = (p: { className?: string }) => (
+  <svg viewBox="0 0 24 24" fill="currentColor" className={p.className ?? 'w-4 h-4'} aria-hidden="true">
+    <path d="M12 2l1.8 5.4L19 9.2l-5.2 1.8L12 16.4l-1.8-5.4L5 9.2l5.2-1.8Z" />
+    <path d="M18.5 15l.9 2.6 2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9Z" />
+  </svg>
+);
+const ResumeIcon = (p: { className?: string }) => (
+  <Icon className={p.className} d="M3 12a9 9 0 1 0 2.64-6.36M3 3v6h6" />
+);
+
 const AUDIO_SET_BADGE: Record<string, { label: string; cls: string }> = {
-  pending: { label: '待生成', cls: 'bg-stone-100 text-stone-600' },
-  generating: { label: '配音中', cls: 'bg-gold-soft text-ink' },
-  completed: { label: '已配音', cls: 'bg-sage-soft text-sage' },
-  interrupted: { label: '中断', cls: 'bg-amber-100 text-amber-700' },
-  failed: { label: '失败', cls: 'bg-red-100 text-red-700' },
+  pending: { label: '待生成', cls: 'bg-paper-3 text-ink' },
+  generating: { label: '配音中', cls: 'bg-brand-soft text-brand-strong' },
+  completed: { label: '已配音', cls: 'bg-sage-soft text-[#3f5a35]' },
+  interrupted: { label: '中断', cls: 'bg-gold-soft text-[#8a5a1e]' },
+  failed: { label: '失败', cls: 'bg-[#f3d9d3] text-[#8f3327]' },
 };
 
 /** 发布检查清单的一行：hard=true 表示缺了会拒绝发布。 */
@@ -56,25 +145,24 @@ function CheckRow({
   return (
     <div className="flex flex-wrap items-center gap-2">
       <span
-        className={`text-xs px-2 py-0.5 rounded-full ${
+        className={`grid h-5 w-5 shrink-0 place-items-center rounded-full ${
           ok
-            ? 'bg-sage-soft text-sage dark:bg-emerald-900 dark:text-emerald-200'
+            ? 'bg-sage-soft text-[#3f5a35]'
             : hard
-              ? 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-200'
-              : 'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-200'
+              ? 'bg-[#f3d9d3] text-[#8f3327]'
+              : 'bg-gold-soft text-[#8a5a1e]'
         }`}
+        title={ok ? '已就绪' : hard ? '缺此项不可发布' : '建议补齐'}
       >
-        {ok ? '✅' : hard ? '❌' : '⚠️'}
+        {ok ? <CheckIcon className="w-3.5 h-3.5" /> : hard ? <CrossIcon className="w-3.5 h-3.5" /> : <WarnIcon className="w-3.5 h-3.5" />}
       </span>
-      <span className="font-medium w-12">{label}</span>
-      <span className="text-gray-600 dark:text-gray-300">{value}</span>
-      {!ok && hint && (
-        <span className="text-gray-500 dark:text-gray-400">· {hint}</span>
-      )}
+      <span className="font-medium w-12 text-ink">{label}</span>
+      <span className="text-muted-strong">{value}</span>
+      {!ok && hint && <span className="text-muted-strong">· {hint}</span>}
       {!ok && actionText && onAction && (
         <button
           onClick={onAction}
-          className="ml-auto text-xs px-2 py-1 rounded-lg bg-brand text-white hover:bg-brand-strong"
+          className="ml-auto inline-flex items-center h-8 px-2.5 rounded-lg text-xs font-medium bg-brand text-white hover:bg-brand-strong cursor-pointer focus-warm transition-colors duration-200"
         >
           {actionText}
         </button>
@@ -131,6 +219,24 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
   const [audioByPage, setAudioByPage] = useState<Record<number, { zh: string[]; en: string[] }>>({});
   // 标题旁刷新图标按钮的加载态
   const [refreshing, setRefreshing] = useState(false);
+  // 二次确认弹窗：替代原生 confirm，保持暖色视觉语言与键盘可达
+  const [confirming, setConfirming] = useState<{
+    title: string;
+    body: string;
+    okText: string;
+    danger?: boolean;
+    onOk: () => void;
+  } | null>(null);
+
+  // Esc 关闭确认弹窗
+  useEffect(() => {
+    if (!confirming) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setConfirming(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [confirming]);
 
   const loadDetail = useCallback(async () => {
     const d = await api.getStory(storyId);
@@ -209,7 +315,7 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
     }
   };
 
-  // 生图是「纯动作」：参数取故事配置，不在这里临时填写
+  // 生图是「纯动作」：参数取图像配置，不在这里临时填写
   const handleGenerate = async () => {
     setBusy(true);
     setError(null);
@@ -337,10 +443,10 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
     aiState === 'running'
       ? 'AI 生成热区中…'
       : aiState === 'resumable'
-        ? '↻ 继续生成热区'
+        ? '继续生成热区'
         : aiState === 'done'
-          ? '✦ 生成热区（只补缺失页）'
-          : '✦ AI 生成热区';
+          ? '生成热区（只补缺失页）'
+          : 'AI 生成热区';
   const aiButtonTitle =
     aiState === 'running'
       ? '后台正在逐页生成，可先做别的'
@@ -419,8 +525,16 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
     }
   };
 
+  const askDeleteSet = (setId: number) =>
+    setConfirming({
+      title: `删除配音方案 #${setId}？`,
+      body: '该方案及其配音记录会被移除（音频文件不会自动删除）。删除后不可恢复。',
+      okText: '确认删除',
+      danger: true,
+      onOk: () => handleDeleteSet(setId),
+    });
+
   const handleDeleteSet = async (setId: number) => {
-    if (!confirm('确认删除该配音方案？（其音频文件不会自动删除）')) return;
     try {
       await api.deleteAudioSet(setId);
       await loadAudio();
@@ -454,21 +568,24 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
     }
   );
 
-  const handlePublish = async () => {
+  // 资产完整时直接发布；缺图/缺文时先二次确认，人工确认后带 force 发布（避免程序把人困住）
+  const askPublish = () => {
+    if (blockedReasons.length === 0) {
+      void handlePublish(false);
+      return;
+    }
+    setConfirming({
+      title: '仍缺资产，确认发布？',
+      body: `${blockedReasons.join('；')}\n发布后不可再修改，缺失页会以占位形式出现在阅读端。`,
+      okText: '仍要发布',
+      onOk: () => handlePublish(true),
+    });
+  };
+
+  const handlePublish = async (force: boolean) => {
     setBusy(true);
     setError(null);
     try {
-      // 资产不完整时由人工确认后带缺图发布（?force=1），避免程序把人困住。
-      const force = blockedReasons.length > 0;
-      if (
-        force &&
-        !window.confirm(
-          `仍有缺图/缺文页：${blockedReasons.join('；')}\n确认仍要发布？`
-        )
-      ) {
-        setBusy(false);
-        return;
-      }
       await api.publish(storyId, force);
       setMessage('已审批通过并发布。');
       await loadDetail();
@@ -544,8 +661,16 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
     }
   );
 
+  const askDelete = () =>
+    setConfirming({
+      title: `删除《${detail?.story.user_title || `故事 #${storyId}`}》？`,
+      body: '删除后该绘本及其分页、图片、配音记录都会移入回收状态，无法在本页恢复。',
+      okText: '确认删除',
+      danger: true,
+      onOk: handleDelete,
+    });
+
   const handleDelete = async () => {
-    if (!confirm('确认删除该故事？')) return;
     try {
       await api.deleteStory(storyId);
       onBack();
@@ -555,7 +680,25 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
     }
   };
 
-  if (!detail) return <p className="text-gray-500">加载中…</p>;
+  // 载入骨架：与真实内容等高，避免加载完成时内容跳动
+  if (!detail) {
+    return (
+      <div className="space-y-6 animate-pulse motion-reduce:animate-none">
+        <div className="h-8 w-64 rounded-lg bg-paper-3" />
+        <div className="flex flex-wrap gap-2">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="h-11 w-28 rounded-xl bg-paper-3" />
+          ))}
+        </div>
+        <div className="h-44 rounded-2xl bg-paper-3" />
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="h-64 rounded-xl2 bg-paper-3" />
+          ))}
+        </div>
+      </div>
+    );
+  }
   const { story, pages } = detail;
   // 发布前可任意操作：按钮由「是否做过该操作 + 是否发布」驱动，不按精确状态卡死（人工可越级）。
   const published = story.status === '审批通过的作品';
@@ -591,12 +734,35 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-3">
-        <h2 className="text-2xl font-bold">{story.user_title || `故事 #${story.id}`}</h2>
+        <button
+          onClick={onBack}
+          aria-label="返回首页"
+          title="返回绘本库首页"
+          className="inline-flex items-center gap-1.5 h-11 px-3 rounded-xl border border-line bg-white text-muted-strong hover:bg-paper-2 hover:text-ink cursor-pointer focus-warm transition-colors duration-200"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="w-4 h-4"
+          >
+            <line x1="19" y1="12" x2="5" y2="12" />
+            <polyline points="12 19 5 12 12 5" />
+          </svg>
+          <span className="text-sm">返回首页</span>
+        </button>
+        <h2 className="font-display text-2xl font-bold text-ink">
+          {story.user_title || `故事 #${story.id}`}
+        </h2>
         <button
           onClick={refresh}
           disabled={refreshing}
+          aria-label="刷新本故事状态"
           title="刷新：重新从服务端拉取本故事最新状态"
-          className="p-1.5 rounded-md text-muted hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50"
+          className="grid h-11 w-11 place-items-center rounded-xl text-muted-strong hover:bg-paper-3 hover:text-ink cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-warm transition-colors duration-200"
         >
           <svg
             viewBox="0 0 24 24"
@@ -618,192 +784,53 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
         </span>
         {/* 层快照徽标：一眼看出是否配音 / 是否配置过热区（不区分次数，至少一次） */}
         {story.has_audio ? (
-          <span className="text-xs px-2 py-0.5 rounded-full bg-[#f6e6c8] text-[#8a5a1e]">已配音</span>
+          <span className="text-xs px-2 py-0.5 rounded-full bg-gold-soft text-[#8a5a1e]">已配音</span>
         ) : null}
         {story.has_hotspots ? (
-          <span className="text-xs px-2 py-0.5 rounded-full bg-[#e7eefb] text-[#36507a]">已配热区</span>
+          <span className="text-xs px-2 py-0.5 rounded-full bg-brand-soft text-brand-strong">已配热区</span>
         ) : null}
-      </div>
-
-      <div className="flex flex-wrap gap-2">
-        <button
-          disabled={busy || !canRewrite}
-          title={published ? '已发布，冻结不可改写' : isGenerating ? '生图进行中，暂不可改写' : undefined}
-          onClick={handleRewrite}
-          className="px-4 py-2 rounded-lg bg-brand text-white disabled:opacity-50"
-        >
-          改写
-        </button>
-        <button
-          disabled={busy}
-          onClick={() => setShowCfg(true)}
-          className="px-4 py-2 rounded-lg bg-stone-600 text-white hover:bg-stone-700 disabled:opacity-50"
-        >
-          故事配置
-        </button>
-        {!published ? (
-          <button
-            disabled={busy || !canGenerate}
-            title={
-              !hasPages
-                ? '请先改写生成分页'
-                : isGenerating
-                ? '生图进行中'
-                : undefined
-            }
-            onClick={() => setConfirmGen(true)}
-            className="px-4 py-2 rounded-lg bg-brand text-white disabled:opacity-50"
-          >
-            {generateLabel}
-          </button>
-        ) : (
-          <button
-            disabled
-            title="已发布，冻结不可重做"
-            className="px-4 py-2 rounded-lg bg-gray-300 dark:bg-gray-600 text-gray-600 dark:text-gray-300 cursor-not-allowed"
-          >
-            生图（已发布冻结）
-          </button>
-        )}
-        {hasGenerated && !published && (
-          <button
-            disabled={busy || isGenerating}
-            title={
-              publishBlocked ? `仍缺：${blockedReasons.join('；')}（点击将确认带缺图发布）` : undefined
-            }
-            onClick={handlePublish}
-            className="px-4 py-2 rounded-lg bg-sage text-white disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            发布
-          </button>
-        )}
-        {/* 配音（TTS）：独立按钮，暖金区别于生图赤陶；非必须，发布前可多次生成对比 */}
-        <button
-          disabled={busyTts || isGeneratingTts || !canTts}
-          onClick={() => setConfirmTtsOpen(true)}
-          title="始终新建一组配音方案（用于多组对比试听）"
-          className="px-4 py-2 rounded-lg bg-[#f6e6c8] text-[#8a5a1e] hover:bg-[#efd9ad] disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          ＋ 新建配音
-        </button>
-        {/* 热区：单按钮，按任务状态切换文案与动作（后台异步任务）；需默认图，发布前可用 */}
-        <button
-          disabled={busyAi || aiState === 'running' || !canHotspot}
-          onClick={aiState === 'resumable' ? resumeAiHotspots : startAiHotspots}
-          title={aiButtonTitle}
-          className={`px-4 py-2 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed ${
-            aiState === 'resumable'
-              ? 'bg-gold-soft text-ink hover:bg-gold/70'
-              : 'bg-brand-soft text-brand hover:bg-brand/20'
-          }`}
-        >
-          {aiButtonText}
-        </button>
-        <button
-          onClick={() => onOpenHotspots(storyId)}
-          title={
-            readiness && readiness.pages > 0
-              ? `热区已覆盖 ${readiness.pages - missingHotspots.length}/${readiness.pages} 页，点击打开热区设置`
-              : '点击打开热区设置'
-          }
-          className="px-4 py-2 rounded-lg bg-brand text-white hover:bg-brand-strong"
-        >
-          热区设置
-          {readiness && readiness.pages > 0
-            ? ` (${readiness.pages - missingHotspots.length}/${readiness.pages})`
-            : ''}
-        </button>
-        <button
-          onClick={() => {
-            const base =
-              (import.meta.env.VITE_READER_BASE as string | undefined) ||
-              'http://localhost:5173';
-            window.open(`${base.replace(/\/$/, '')}/book/${storyId}`, '_blank');
-          }}
-          title="在阅读端打开这本书，用于验证热区与音频效果"
-          className="px-4 py-2 rounded-lg bg-brand text-white hover:bg-brand-strong"
-        >
-          预览
-        </button>
+        {/* 删除是破坏性操作：不抢主视觉，用中性图标按钮，悬停才转危险色 */}
         <button
           disabled={isGenerating}
-          onClick={handleDelete}
-          className="px-4 py-2 rounded-lg bg-red-500 text-white disabled:opacity-50"
+          onClick={askDelete}
+          aria-label="删除该故事"
+          title={isGenerating ? '生图进行中，暂不可删除' : '删除该故事（移入回收状态）'}
+          className="ml-auto grid h-11 w-11 place-items-center rounded-xl border border-line bg-white text-muted-strong hover:border-[#b3453a] hover:text-[#b3453a] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-warm transition-colors duration-200"
         >
-          删除
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="w-5 h-5"
+          >
+            <path d="M3 6h18" />
+            <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+            <line x1="10" y1="11" x2="10" y2="17" />
+            <line x1="14" y1="11" x2="14" y2="17" />
+          </svg>
         </button>
       </div>
 
-      {readiness && readiness.pages > 0 && (
-        <section className="rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="font-bold">发布检查</h3>
-            {publishBlocked && (
-              <span className="text-xs text-red-600 dark:text-red-400">
-                不可发布：{blockedReasons.join('；')}
-              </span>
-            )}
-          </div>
-          <div className="space-y-2 text-sm">
-            <CheckRow
-              ok={missingImages.length === 0}
-              hard
-              label="插图"
-              value={`${readiness.pages - missingImages.length}/${readiness.pages} 页`}
-              hint={
-                missingImages.length > 0
-                  ? `缺第 ${missingImages.join('、')} 页`
-                  : undefined
-              }
-              actionText={canRepaint ? '去补画' : undefined}
-              onAction={canRepaint ? () => setConfirmGen(true) : undefined}
-            />
-            <CheckRow
-              ok={missingTexts.length === 0}
-              hard
-              label="文本"
-              value={`${readiness.pages - missingTexts.length}/${readiness.pages} 页`}
-              hint={
-                missingTexts.length > 0
-                  ? `第 ${missingTexts.join('、')} 页缺中英文本，可点「改写」重排`
-                  : undefined
-              }
-            />
-            <CheckRow
-              ok={!readiness.audio}
-              hard={false}
-              label="配音"
-              value={
-                readiness.audio
-                  ? '未选用已完成的配音方案'
-                  : selectedAudioSetId != null
-                    ? `已选用 #${selectedAudioSetId}`
-                    : '已就绪'
-              }
-              hint={readiness.audio ? '允许发布为纯图文绘本' : undefined}
-              actionText={readiness.audio ? '新建配音' : undefined}
-              onAction={readiness.audio ? () => startTts(true) : undefined}
-            />
-            <CheckRow
-              ok={missingHotspots.length === 0}
-              hard={false}
-              label="热区"
-              value={`${readiness.pages - missingHotspots.length}/${readiness.pages} 页`}
-              hint={
-                missingHotspots.length > 0
-                  ? `第 ${missingHotspots.join('、')} 页尚无热区`
-                  : undefined
-              }
-              actionText={missingHotspots.length > 0 ? '去配热区' : undefined}
-              onAction={
-                missingHotspots.length > 0
-                  ? () => onOpenHotspots(storyId)
-                  : undefined
-              }
-            />
-          </div>
-        </section>
-      )}
+      {/* 区块锚点导航：长页面快速跳转（顺序与区块一致） */}
+      <nav aria-label="区块导航" className="flex flex-wrap gap-2">
+        {SECTION_NAV.map((s) => (
+          <a
+            key={s.id}
+            href={`#${s.id}`}
+            onClick={(e) => {
+              e.preventDefault();
+              scrollToSection(s.id);
+            }}
+            className="inline-flex items-center h-9 px-3 rounded-full text-sm bg-white border border-line text-muted-strong hover:bg-paper-2 hover:text-ink cursor-pointer focus-warm transition-colors duration-200"
+          >
+            {s.label}
+          </a>
+        ))}
+      </nav>
 
       {message && (
         <div className="p-3 rounded-lg border-l-4 border-[#9bb38a] bg-sage-soft text-sm whitespace-pre-line">
@@ -811,114 +838,13 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
         </div>
       )}
       {error && (
-        <div className="p-3 rounded-lg border-l-4 border-red-400 bg-red-50 dark:bg-red-900/30 text-sm text-red-700 dark:text-red-300 whitespace-pre-line">
+        <div
+          role="alert"
+          className="p-3 rounded-lg border-l-4 border-[#b3453a] bg-[#f9ecea] text-sm text-[#8f3327] whitespace-pre-line"
+        >
           {error}
         </div>
       )}
-
-      {/* ===== 配音（TTS）独立区块：进度/方案管理，与生图互不干扰 ===== */}
-      <section className="rounded-2xl border border-gold/40 bg-gold-soft p-5 space-y-4">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <h3 className="text-lg font-bold text-ink">配音方案</h3>
-          <span className="text-sm text-gray-500">
-            方案数 {audioSets.length}
-            {selectedAudioSetId != null && ` · 当前选用 #${selectedAudioSetId}`}
-            {isGeneratingTts && ' · 配音中…'}
-          </span>
-        </div>
-
-        {ttsMessage && (
-          <div className="text-sm p-2 rounded-lg border-l-4 border-[#d9b46a] bg-gold-soft whitespace-pre-line">
-            {ttsMessage}
-          </div>
-        )}
-        {ttsError && (
-          <div className="text-sm p-2 rounded-lg border-l-4 border-red-400 bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300">
-            {ttsError}
-          </div>
-        )}
-
-        {ttsTask && ['queued', 'running'].includes(ttsTask.status) && (
-          <div className="text-sm text-gray-600 dark:text-gray-300 flex items-center gap-3">
-            <span>
-              配音任务 #{ttsTask.id} 进行中
-              {(() => {
-                const p = ttsTask.progress ? JSON.parse(ttsTask.progress) : null;
-                return p ? ` · 进度 ${p.done}/${p.total}${p.failed ? ` · 失败 ${p.failed}` : ''}` : '';
-              })()}
-            </span>
-            <button
-              onClick={() => handleCancelTask(ttsTask.id)}
-              className="px-2 py-1 rounded-md bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 text-xs"
-            >
-              取消
-            </button>
-          </div>
-        )}
-        {ttsTask?.status === 'failed' && (
-          <div className="text-sm text-red-500">配音任务 #{ttsTask.id} 失败：{ttsTask.last_error ?? '未知原因'}</div>
-        )}
-
-        {audioSets.length === 0 ? (
-          <p className="text-sm text-gray-500">尚无配音方案，点击「新建配音」开始（可多次生成不同音色组对比，逐组试听后选用）。</p>
-        ) : (
-          <div className="grid gap-3 sm:grid-cols-2">
-            {audioSets.map((s) => {
-              const sel = s.id === selectedAudioSetId;
-              return (
-                <div
-                  key={s.id}
-                  className={`rounded-xl border p-3 ${
-                    sel
-                      ? 'border-gold bg-gold-soft'
-                      : 'border-gray-200 dark:border-gray-700'
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-semibold">#{s.id} {s.name}</span>
-                    <AudioSetBadge status={s.status} />
-                  </div>
-                  <div className="text-xs text-gray-500 mt-1">
-                    进度 {s.done}/{s.total}
-                    {sel && ' · 当前选用'}
-                  </div>
-                  <div className="flex flex-wrap gap-2 mt-2">
-                    <button
-                      disabled={sel}
-                      onClick={() => handleSelectSet(s.id)}
-                      className="text-xs px-3 py-1.5 rounded-lg bg-[#6f8f5f] text-white disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                      {sel ? '已选用' : '设为选用'}
-                    </button>
-                    <button
-                      onClick={() => setListen({ id: s.id, name: `#${s.id} ${s.name}` })}
-                      className="text-xs px-3 py-1.5 rounded-lg bg-gold text-ink hover:bg-gold/90"
-                    >
-                      试听
-                    </button>
-                    {(s.status === 'interrupted' || s.status === 'failed') && (
-                      <button
-                        disabled={busyTts || isGeneratingTts || !canTts}
-                        onClick={() => handleResumeSet(s.id)}
-                        className="text-xs px-3 py-1.5 rounded-lg bg-gold text-ink disabled:opacity-50"
-                      >
-                        继续生成
-                      </button>
-                    )}
-                    <button
-                      disabled={sel}
-                      onClick={() => handleDeleteSet(s.id)}
-                      className="text-xs px-3 py-1.5 rounded-lg bg-red-500 text-white disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                      删除
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
 
       {listen && (
         <AudioPlanModal
@@ -929,50 +855,70 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
         />
       )}
 
-      <section>
-        <div className="flex items-center gap-2 mb-2">
-          <h3 className="text-lg font-bold">故事文本</h3>
-          <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-gray-600">
+      <section id="sec-text" className={SECTION}>
+        <SectionHead
+          title="故事文本"
+          desc="原文为录入文本；改写后是 AI 扩写/压缩结果，也是分页与配音的源文本。"
+        >
+          <button
+            disabled={busy || !canRewrite}
+            title={
+              published
+                ? '已发布，冻结不可改写'
+                : isGenerating
+                  ? '生图进行中，暂不可改写'
+                  : undefined
+            }
+            onClick={handleRewrite}
+            className={ACTION_PRIMARY}
+          >
+            改写
+          </button>
+        </SectionHead>
+        <div className="flex items-center gap-2 mb-3">
+          <div className="flex rounded-lg overflow-hidden border border-line">
             <button
               onClick={() => setTextTab('original')}
-              className={`px-3 py-1 text-sm ${
+              aria-pressed={textTab === 'original'}
+              className={`inline-flex items-center h-9 px-3 text-sm cursor-pointer focus-warm transition-colors duration-200 ${
                 textTab === 'original'
                   ? 'bg-brand text-white'
-                  : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300'
+                  : 'bg-white text-muted-strong hover:bg-paper-2'
               }`}
             >
               原文
             </button>
             <button
               onClick={() => setTextTab('refined')}
-              className={`px-3 py-1 text-sm ${
+              aria-pressed={textTab === 'refined'}
+              className={`inline-flex items-center h-9 px-3 text-sm cursor-pointer focus-warm transition-colors duration-200 ${
                 textTab === 'refined'
                   ? 'bg-brand text-white'
-                  : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300'
+                  : 'bg-white text-muted-strong hover:bg-paper-2'
               }`}
             >
               改写后
             </button>
           </div>
         </div>
-        <div className="bg-white dark:bg-gray-800 rounded-xl shadow p-4">
+        <div className="bg-white border border-line rounded-xl shadow-card p-4">
           {textTab === 'original' ? (
-            <p className="text-sm whitespace-pre-wrap text-gray-700 dark:text-gray-200">
+            <p className="text-sm whitespace-pre-wrap text-ink leading-relaxed">
               {story.original_text}
             </p>
           ) : story.refined_text ? (
-            <p className="text-sm whitespace-pre-wrap text-gray-700 dark:text-gray-200">
+            <p className="text-sm whitespace-pre-wrap text-ink leading-relaxed">
               {story.refined_text}
             </p>
           ) : (
-            <p className="text-sm text-gray-500">
+            <p className="text-sm text-muted-strong">
               尚未改写（改写后此处显示 AI 扩写/压缩后的全文）。
             </p>
           )}
         </div>
       </section>
 
-      <Modal open={showCfg} onClose={() => setShowCfg(false)} title="故事配置">
+      <Modal open={showCfg} onClose={() => setShowCfg(false)} title="图像配置">
         <StoryConfigPanel
           story={story}
           onSaved={async () => {
@@ -982,42 +928,72 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
         />
       </Modal>
 
-      {confirmGen && (
-        <div className="bg-white dark:bg-gray-800 rounded-xl shadow p-5">
-          <h3 className="font-bold mb-2">
-            {!hasGenerated ? '确认开始生图' : '确认续跑生图'}
-          </h3>
-          <p className="text-sm text-gray-600 dark:text-gray-300 mb-2">
-            将使用「故事配置」中的生图参数：帧阈值 {genCfg.frame_threshold} · 序列阈值{' '}
+      {/* 生图确认：原为追加在页面末尾的内联卡片（容易被忽略），改为居中弹窗 */}
+      <Modal
+        open={confirmGen}
+        onClose={() => setConfirmGen(false)}
+        title={!hasGenerated ? '确认开始生图' : '确认续跑生图'}
+        maxWidth="max-w-lg"
+      >
+        <div className="space-y-3 text-sm text-muted-strong">
+          <p className="leading-relaxed">
+            将使用「图像配置」中的生图参数：帧阈值 {genCfg.frame_threshold} · 序列阈值{' '}
             {genCfg.sequence_threshold} · 首跑每页 {genCfg.initial_retry_budget} 次 · 单页上限{' '}
             {genCfg.max_frame_retry} 次 · {genCfg.aspect_ratio} / {genCfg.image_size}
           </p>
-          <p className="text-sm text-amber-600 mb-3">
+          <p className="text-[#8a5a1e] leading-relaxed">
             共 {pages.length} 页，最多约 {estimateCalls} 次生图调用
             {!hasGenerated ? '' : '（续跑：已有图页跳过，仅补齐缺失页）'}。
           </p>
-          <div className="flex gap-2">
-            <button
-              disabled={busy}
-              onClick={handleGenerate}
-              className="px-6 py-2 rounded-lg bg-brand text-white disabled:opacity-50"
-            >
-              确认生图
-            </button>
-            <button
-              onClick={() => setConfirmGen(false)}
-              className="px-6 py-2 rounded-lg bg-gray-200 dark:bg-gray-700"
-            >
+          <div className="flex justify-end gap-3 pt-1">
+            <button onClick={() => setConfirmGen(false)} className={ACTION_GHOST}>
               取消
+            </button>
+            <button disabled={busy} onClick={handleGenerate} className={ACTION_PRIMARY}>
+              确认生图
             </button>
           </div>
         </div>
-      )}
+      </Modal>
 
-      <section>
-        <h3 className="text-lg font-bold mb-2">生图版本（当前生效高亮）</h3>
+      <section id="sec-image" className={SECTION}>
+        <SectionHead title="图像" desc="先配置后生图：生图按版本留存，续跑只补缺失页，已有图页不会重画。">
+          <button
+            disabled={busy}
+            onClick={() => setShowCfg(true)}
+            title="出图比例与尺寸、生图质量阈值与重试次数、灵感图"
+            className={ACTION_GHOST}
+          >
+            图像配置
+          </button>
+          {!published ? (
+            <button
+              disabled={busy || !canGenerate}
+              title={
+                !hasPages
+                  ? '请先改写生成分页'
+                  : isGenerating
+                    ? '生图进行中'
+                    : undefined
+              }
+              onClick={() => setConfirmGen(true)}
+              className={ACTION_PRIMARY}
+            >
+              {generateLabel}
+            </button>
+          ) : (
+            <button
+              disabled
+              title="已发布，冻结不可重做"
+              className={`${ACTION_GHOST} opacity-50`}
+            >
+              生图（已发布冻结）
+            </button>
+          )}
+        </SectionHead>
+        <h4 className="font-display font-bold text-ink mb-3">生图版本（当前生效高亮）</h4>
         {task && ['queued', 'running'].includes(task.status) && (
-          <div className="mb-3 text-sm text-gray-600 dark:text-gray-300 flex items-center gap-3">
+          <div className="mb-3 text-sm text-muted-strong flex items-center gap-3">
             <span>
               任务 #{task.id} 进行中
               {taskProgress
@@ -1028,19 +1004,19 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
             </span>
             <button
               onClick={() => handleCancelTask(task.id)}
-              className="px-2 py-1 rounded-md bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 text-xs"
+              className="inline-flex items-center h-8 px-2.5 rounded-lg text-xs bg-white border border-line text-ink hover:bg-paper-2 cursor-pointer focus-warm transition-colors duration-200"
             >
               取消
             </button>
           </div>
         )}
         {task?.status === 'failed' && (
-          <div className="mb-3 text-sm text-red-500">
+          <div className="mb-3 text-sm text-[#8f3327]">
             任务 #{task.id} 失败：{task.last_error ?? '未知原因'}
           </div>
         )}
         {runs.length === 0 ? (
-          <p className="text-gray-500 text-sm">尚无生图记录。</p>
+          <p className="text-muted-strong text-sm">尚无生图记录。</p>
         ) : (
           <div className="flex flex-wrap gap-2">
             {runs.map((r) => (
@@ -1050,10 +1026,11 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
                   setActiveRunId(r.id);
                   loadRunDetail(r.id);
                 }}
-                className={`px-3 py-1.5 rounded-lg text-sm border ${
+                aria-pressed={r.id === story.current_run_id}
+                className={`inline-flex items-center h-9 px-3 rounded-lg text-sm border cursor-pointer focus-warm transition-colors duration-200 ${
                   r.id === story.current_run_id
-                    ? 'border-brand bg-[#f6e6c8]'
-                    : 'border-gray-300 dark:border-gray-600'
+                    ? 'border-brand bg-gold-soft text-ink'
+                    : 'border-line bg-white text-muted-strong hover:bg-paper-2'
                 }`}
               >
                 #{r.id}{' '}
@@ -1064,11 +1041,10 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
             ))}
           </div>
         )}
-      </section>
 
-      {runDetail && (
-        <section className="space-y-4">
-          <AnchorGallery characters={runDetail.characters} />
+        {runDetail && (
+          <div className="space-y-4">
+            <AnchorGallery characters={runDetail.characters} />
 
           {runDetail.sequence_checks.length > 0 &&
             runDetail.sequence_checks[0] &&
@@ -1081,13 +1057,21 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
                 issues = [];
               }
               return (
-                <div className="p-3 rounded-lg border-l-4 border-[#d9b46a] bg-[#f6e6c8] text-sm">
-                  一致性评估: {sc.is_consistent ? '一致 ✅' : '存在不一致 ⚠️'}（评分{' '}
-                  {sc.score?.toFixed(2)}）
+                <div className="p-3 rounded-lg border-l-4 border-gold bg-gold-soft text-sm text-ink">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span>一致性评估:</span>
+                    <span className="inline-flex items-center gap-1 font-medium">
+                      {sc.is_consistent ? (
+                        <CheckIcon className="w-4 h-4 text-[#3f5a35]" />
+                      ) : (
+                        <WarnIcon className="w-4 h-4 text-[#8a5a1e]" />
+                      )}
+                      {sc.is_consistent ? '一致' : '存在不一致'}
+                    </span>
+                    <span>（评分 {sc.score?.toFixed(2)}）</span>
+                  </div>
                   {issues.length > 0 && (
-                    <div className="mt-1 text-gray-600 dark:text-gray-300">
-                      问题: {issues.join('; ')}
-                    </div>
+                    <div className="mt-1 text-muted-strong">问题: {issues.join('; ')}</div>
                   )}
                 </div>
               );
@@ -1107,54 +1091,367 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
               />
             ))}
           </div>
-        </section>
+        </div>
       )}
 
       {!runDetail && pages.length > 0 && (
-        <section>
-          <h3 className="text-lg font-bold mb-2">分页脚本（尚未生图）</h3>
+        <div>
+          <h4 className="font-display font-bold text-ink mb-3">分页脚本（尚未生图）</h4>
           <div className="space-y-2">
             {pages.map((p) => (
               <div
                 key={p.id}
-                className="p-3 bg-white dark:bg-gray-800 rounded-lg shadow text-sm"
+                className="p-3 bg-white border border-line rounded-lg shadow-card text-sm"
               >
-                <div className="font-semibold mb-1">第 {p.page_number} 页</div>
-                <p className="text-gray-600 dark:text-gray-300 whitespace-pre-wrap">
+                <div className="font-semibold text-ink mb-1">第 {p.page_number} 页</div>
+                <p className="text-muted-strong whitespace-pre-wrap leading-relaxed">
                   {p.text_en || p.text_zh || '(无文本)'}
                 </p>
               </div>
             ))}
           </div>
-        </section>
+        </div>
       )}
+      </section>
+
+      {/* ===== 配音（TTS）独立区块：进度/方案管理，与生图互不干扰 ===== */}
+      <section id="sec-audio" className={`${SECTION} border-gold/40 bg-gold-soft space-y-4`}>
+        <SectionHead
+          title={`配音方案（${audioSets.length}）`}
+          desc="可多次生成不同音色组对比，逐组试听后选用一组。"
+        >
+          <button
+            disabled={busyTts || isGeneratingTts || !canTts}
+            onClick={() => setConfirmTtsOpen(true)}
+            title="始终新建一组配音方案（用于多组对比试听）"
+            className={ACTION_GOLD}
+          >
+            <PlusIcon />
+            新建配音
+          </button>
+        </SectionHead>
+        {/* 状态性的附加信息（选用/进行中）单独一行；方案数已并入标题 */}
+        {(() => {
+          const bits: string[] = [];
+          if (selectedAudioSetId != null) bits.push(`当前选用 #${selectedAudioSetId}`);
+          if (isGeneratingTts) bits.push('配音中…');
+          if (bits.length === 0) return null;
+          return <p className="text-sm text-muted-strong -mt-2">{bits.join(' · ')}</p>;
+        })()}
+
+        {ttsMessage && (
+          <div className="text-sm p-2 rounded-lg border-l-4 border-[#d9b46a] bg-gold-soft whitespace-pre-line">
+            {ttsMessage}
+          </div>
+        )}
+        {ttsError && (
+          <div
+            role="alert"
+            className="text-sm p-2 rounded-lg border-l-4 border-[#b3453a] bg-[#f9ecea] text-[#8f3327]"
+          >
+            {ttsError}
+          </div>
+        )}
+
+        {ttsTask && ['queued', 'running'].includes(ttsTask.status) && (
+          <div className="text-sm text-muted-strong flex items-center gap-3">
+            <span>
+              配音任务 #{ttsTask.id} 进行中
+              {(() => {
+                const p = ttsTask.progress ? JSON.parse(ttsTask.progress) : null;
+                return p ? ` · 进度 ${p.done}/${p.total}${p.failed ? ` · 失败 ${p.failed}` : ''}` : '';
+              })()}
+            </span>
+            <button
+              onClick={() => handleCancelTask(ttsTask.id)}
+              className="inline-flex items-center h-8 px-2.5 rounded-lg text-xs bg-white border border-line text-ink hover:bg-paper-2 cursor-pointer focus-warm transition-colors duration-200"
+            >
+              取消
+            </button>
+          </div>
+        )}
+        {ttsTask?.status === 'failed' && (
+          <div className="text-sm text-[#8f3327]">配音任务 #{ttsTask.id} 失败：{ttsTask.last_error ?? '未知原因'}</div>
+        )}
+
+        {audioSets.length === 0 ? (
+          <p className="text-sm text-muted-strong">尚无配音方案，点击「新建配音」开始（可多次生成不同音色组对比，逐组试听后选用）。</p>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {audioSets.map((s) => {
+              const sel = s.id === selectedAudioSetId;
+              return (
+                <div
+                  key={s.id}
+                  className={`rounded-xl border p-3 shadow-card transition-colors duration-200 ${
+                    sel ? 'border-gold bg-gold-soft' : 'border-line bg-white'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold text-ink">#{s.id} {s.name}</span>
+                    <AudioSetBadge status={s.status} />
+                  </div>
+                  <div className="text-xs text-muted-strong mt-1">
+                    进度 {s.done}/{s.total}
+                    {sel && ' · 当前选用'}
+                  </div>
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    <button
+                      disabled={sel}
+                      onClick={() => handleSelectSet(s.id)}
+                      className={SMALL_SAGE}
+                    >
+                      {sel ? '已选用' : '设为选用'}
+                    </button>
+                    <button
+                      onClick={() => setListen({ id: s.id, name: `#${s.id} ${s.name}` })}
+                      className={SMALL_GOLD}
+                    >
+                      试听
+                    </button>
+                    {(s.status === 'interrupted' || s.status === 'failed') && (
+                      <button
+                        disabled={busyTts || isGeneratingTts || !canTts}
+                        onClick={() => handleResumeSet(s.id)}
+                        className={SMALL_GOLD}
+                      >
+                        继续生成
+                      </button>
+                    )}
+                    <button
+                      disabled={sel}
+                      onClick={() => askDeleteSet(s.id)}
+                      className={SMALL_DANGER}
+                    >
+                      删除
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* 热区：生图完成后的独立环节，单按钮按任务状态切换文案与动作 */}
+      <section id="sec-hotspot" className={SECTION}>
+        <SectionHead
+          title="热区"
+          desc={
+            readiness && readiness.pages > 0
+              ? `已覆盖 ${readiness.pages - missingHotspots.length}/${readiness.pages} 页；AI 生成只补缺失页，人工微调会保留。`
+              : '生图完成后，可为每页各分段自动定位可点击热区。'
+          }
+        >
+          <button
+            disabled={busyAi || aiState === 'running' || !canHotspot}
+            onClick={aiState === 'resumable' ? resumeAiHotspots : startAiHotspots}
+            title={aiButtonTitle}
+            className={`${ACTION_BASE} ${
+              aiState === 'resumable'
+                ? 'bg-gold-soft text-[#8a5a1e] hover:bg-[#efd9ad]'
+                : 'bg-brand-soft text-brand-strong hover:bg-brand/20'
+            }`}
+          >
+            {aiState === 'resumable' ? <ResumeIcon /> : <SparkIcon />}
+            {aiButtonText}
+          </button>
+          <button
+            onClick={() => onOpenHotspots(storyId)}
+            title="打开热区设置，逐页微调热区位置与文案"
+            className={ACTION_PRIMARY}
+          >
+            热区设置
+            {readiness && readiness.pages > 0
+              ? ` (${readiness.pages - missingHotspots.length}/${readiness.pages})`
+              : ''}
+          </button>
+        </SectionHead>
+        {readiness && missingHotspots.length > 0 && (
+          <p className="text-sm text-muted-strong">
+            第 {missingHotspots.join('、')} 页尚无热区，可先「{aiButtonText}」再进设置微调。
+          </p>
+        )}
+      </section>
+
+      {/* 发布与预览：流水线最后一环，发布前先看门禁清单 */}
+      <section id="sec-publish" className={SECTION}>
+        <SectionHead
+          title="发布与预览"
+          desc={
+            readiness && readiness.pages > 0
+              ? '插图与文本是硬门禁，缺项会被后端拒绝；配音与热区是软提示，允许发布为纯图文绘本。'
+              : '尚无分页，先完成「改写」生成分页脚本，再回来发布。'
+          }
+        >
+          <button
+            onClick={() => {
+              const base =
+                (import.meta.env.VITE_READER_BASE as string | undefined) ||
+                'http://localhost:5173';
+              window.open(`${base.replace(/\/$/, '')}/book/${storyId}`, '_blank');
+            }}
+            title="在阅读端打开这本书，用于验证热区与音频效果"
+            className={ACTION_GHOST}
+          >
+            预览
+          </button>
+          {hasGenerated && !published && (
+            <button
+              disabled={busy || isGenerating}
+              title={
+                publishBlocked ? `仍缺：${blockedReasons.join('；')}（点击将确认带缺图发布）` : undefined
+              }
+              onClick={askPublish}
+              className={ACTION_SAGE}
+            >
+              发布
+            </button>
+          )}
+        </SectionHead>
+        {readiness && readiness.pages > 0 ? (
+          <>
+            {publishBlocked && (
+              <p className="mb-3 text-xs text-[#8f3327]">
+                不可发布：{blockedReasons.join('；')}
+              </p>
+            )}
+            <div className="space-y-2 text-sm">
+              <CheckRow
+                ok={missingImages.length === 0}
+                hard
+                label="插图"
+                value={`${readiness.pages - missingImages.length}/${readiness.pages} 页`}
+                hint={
+                  missingImages.length > 0
+                    ? `缺第 ${missingImages.join('、')} 页`
+                    : undefined
+                }
+                actionText={canRepaint ? '去补画' : undefined}
+                onAction={canRepaint ? () => setConfirmGen(true) : undefined}
+              />
+              <CheckRow
+                ok={missingTexts.length === 0}
+                hard
+                label="文本"
+                value={`${readiness.pages - missingTexts.length}/${readiness.pages} 页`}
+                hint={
+                  missingTexts.length > 0
+                    ? `第 ${missingTexts.join('、')} 页缺中英文本，可点「改写」重排`
+                    : undefined
+                }
+              />
+              <CheckRow
+                ok={!readiness.audio}
+                hard={false}
+                label="配音"
+                value={
+                  readiness.audio
+                    ? '未选用已完成的配音方案'
+                    : selectedAudioSetId != null
+                      ? `已选用 #${selectedAudioSetId}`
+                      : '已就绪'
+                }
+                hint={readiness.audio ? '允许发布为纯图文绘本' : undefined}
+                actionText={readiness.audio ? '新建配音' : undefined}
+                onAction={readiness.audio ? () => startTts(true) : undefined}
+              />
+              <CheckRow
+                ok={missingHotspots.length === 0}
+                hard={false}
+                label="热区"
+                value={`${readiness.pages - missingHotspots.length}/${readiness.pages} 页`}
+                hint={
+                  missingHotspots.length > 0
+                    ? `第 ${missingHotspots.join('、')} 页尚无热区`
+                    : undefined
+                }
+                actionText={missingHotspots.length > 0 ? '去配热区' : undefined}
+                onAction={
+                  missingHotspots.length > 0
+                    ? () => onOpenHotspots(storyId)
+                    : undefined
+                }
+              />
+            </div>
+          </>
+        ) : null}
+      </section>
 
       {/* S17：新建配音前的成本预估二次确认 */}
       {confirmTtsOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl max-w-sm w-full p-5">
-            <h3 className="text-lg font-bold mb-3">确认生成配音？</h3>
-            <p className="text-sm text-gray-700 dark:text-gray-200 mb-4">
-              将为 <b>{pages.length}</b> 页 · <b>{detail?.segment_count ?? 0}</b> 个分段 ×{' '}
-              <b>2</b> 种语言（中/英）合成，约 <b>{(detail?.segment_count ?? 0) * 2}</b> 条音频。
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 backdrop-blur-sm p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="confirm-tts-title"
+            className="w-full max-w-sm rounded-2xl bg-white border border-line shadow-soft p-6"
+          >
+            <h3 id="confirm-tts-title" className="font-display text-lg font-bold text-ink mb-3">
+              确认生成配音？
+            </h3>
+            <p className="text-sm text-muted-strong leading-relaxed mb-5">
+              将为 <b className="text-ink">{pages.length}</b> 页 ·{' '}
+              <b className="text-ink">{detail?.segment_count ?? 0}</b> 个分段 ×{' '}
+              <b className="text-ink">2</b> 种语言（中/英）合成，约{' '}
+              <b className="text-ink">{(detail?.segment_count ?? 0) * 2}</b> 条音频。
               <br />
               生成会立即消耗 TTS 调用额度，请确认。
             </p>
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setConfirmTtsOpen(false)}
-                className="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700"
-              >
+            <div className="flex justify-end gap-3">
+              <button onClick={() => setConfirmTtsOpen(false)} className={ACTION_GHOST}>
                 取消
               </button>
               <button
+                autoFocus
                 onClick={() => {
                   setConfirmTtsOpen(false);
                   startTts(true);
                 }}
-                className="px-4 py-2 rounded-lg bg-gold text-ink hover:bg-gold/90"
+                className={ACTION_PRIMARY}
               >
                 确认生成
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 删除 / 带缺资产发布 的二次确认：替代原生 confirm，保持暖色视觉语言与键盘可达 */}
+      {confirming && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 backdrop-blur-sm p-4"
+          onClick={() => setConfirming(null)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="confirm-title"
+            className="w-full max-w-md rounded-2xl bg-white border border-line shadow-soft overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-6 pt-6">
+              <h3 id="confirm-title" className="font-display text-lg font-bold text-ink">
+                {confirming.title}
+              </h3>
+              <p className="mt-2 text-sm text-muted-strong leading-relaxed whitespace-pre-line">
+                {confirming.body}
+              </p>
+            </div>
+            <div className="flex justify-end gap-3 px-6 py-5">
+              <button onClick={() => setConfirming(null)} className={ACTION_GHOST}>
+                取消
+              </button>
+              <button
+                autoFocus
+                onClick={() => {
+                  const ok = confirming.onOk;
+                  setConfirming(null);
+                  ok();
+                }}
+                className={confirming.danger ? ACTION_DANGER : ACTION_PRIMARY}
+              >
+                {confirming.okText}
               </button>
             </div>
           </div>

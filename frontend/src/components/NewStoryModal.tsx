@@ -1,6 +1,10 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api/client";
+import { joinStyle } from "../style";
 import { MagicWandIcon } from "./icons/MagicWandIcon";
+import ConfigSection from "./ConfigSection";
+import StylePicker from "./StylePicker";
+import Lightbox from "./Lightbox";
 
 const DEFAULT_STYLE = "whimsical, cute, soft-color children's picture-book style";
 
@@ -60,10 +64,14 @@ const NewStoryModal: React.FC<Props> = ({ open, onClose, onCreated }) => {
   const [feedback, setFeedback] = useState("");
   // 每轮优化成功后累积，传给后端防止后续轮次把已确认的改动改回去
   const [appliedFeedbacks, setAppliedFeedbacks] = useState<string[]>([]);
-  const [style, setStyle] = useState(DEFAULT_STYLE);
+  // 画风沿用「图像配置」弹窗的表示法：中文预设多选 + 自定义英文补充
+  const [selectedStyles, setSelectedStyles] = useState<string[]>([]);
+  const [customStyle, setCustomStyle] = useState(DEFAULT_STYLE);
   const [pageCount, setPageCount] = useState(6);
   const [title, setTitle] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [zoom, setZoom] = useState<string | null>(null);
   const [showCfg, setShowCfg] = useState(false);
   const [busy, setBusy] = useState(false);
   const [genBusy, setGenBusy] = useState(false);
@@ -81,6 +89,17 @@ const NewStoryModal: React.FC<Props> = ({ open, onClose, onCreated }) => {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open, busy, genBusy, optBusy, onClose]);
+
+  // 灵感图本地预览：Object URL 需显式释放，避免内存泄漏
+  useEffect(() => {
+    if (!file) {
+      setPreviewUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
 
   if (!open) return null;
 
@@ -143,7 +162,7 @@ const NewStoryModal: React.FC<Props> = ({ open, onClose, onCreated }) => {
       if (file) inspiration = await readAsDataUrl(file);
       await api.createStory({
         original_text: text,
-        style: style || undefined,
+        style: joinStyle(selectedStyles, customStyle) || undefined,
         target_page_count: pageCount,
         user_title: title || undefined,
         inspiration_image: inspiration,
@@ -154,6 +173,8 @@ const NewStoryModal: React.FC<Props> = ({ open, onClose, onCreated }) => {
       setAppliedFeedbacks([]);
       setFile(null);
       setTitle("");
+      setSelectedStyles([]);
+      setCustomStyle(DEFAULT_STYLE);
       setShowCfg(false);
       onCreated();
       onClose();
@@ -339,46 +360,107 @@ const NewStoryModal: React.FC<Props> = ({ open, onClose, onCreated }) => {
               更多配置（页数 / 标题 / 画风 / 灵感图）
             </button>
             {showCfg && (
-              <div className="mt-2 grid gap-4 sm:grid-cols-2 p-4 rounded-xl2 border border-line bg-paper">
-                <label className="text-xs text-muted flex flex-col gap-1">
-                  页数（1–20，用于改写分页）
-                  <input
-                    type="number"
-                    min={1}
-                    max={20}
-                    value={pageCount}
-                    onChange={(e) => {
-                      const v = parseInt(e.target.value, 10);
-                      setPageCount(Number.isNaN(v) ? 1 : Math.min(Math.max(v, 1), 20));
+              <div className="mt-2 p-4 rounded-xl2 border border-line bg-paper">
+                <p className="text-xs text-muted mb-4 leading-relaxed">
+                  页数只影响「改写」分页；画风与灵感图在生图 / 分页阶段生效，创建后仍可在详情页「图像配置」里改。
+                </p>
+                <ConfigSection title="基础信息">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <label className="text-sm text-muted flex flex-col gap-1">
+                      标题（可选）
+                      <input
+                        value={title}
+                        onChange={(e) => setTitle(e.target.value)}
+                        placeholder="留空则显示「故事 #ID」"
+                        className="px-2 py-1 border border-line rounded-lg bg-white text-ink focus-warm"
+                      />
+                    </label>
+                    <label className="text-sm text-muted flex flex-col gap-1">
+                      页数 (1–20)
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          aria-label="减少页数"
+                          onClick={() => setPageCount(Math.max(1, pageCount - 1))}
+                          className="w-9 h-9 rounded-lg border border-line bg-white text-ink hover:bg-paper-2 cursor-pointer focus-warm"
+                        >
+                          −
+                        </button>
+                        <input
+                          type="number"
+                          min={1}
+                          max={20}
+                          value={pageCount}
+                          onChange={(e) => {
+                            const v = parseInt(e.target.value, 10);
+                            setPageCount(Number.isNaN(v) ? 1 : Math.min(Math.max(v, 1), 20));
+                          }}
+                          className="w-16 text-center px-2 py-1 border border-line rounded-lg bg-white text-ink focus-warm"
+                        />
+                        <button
+                          type="button"
+                          aria-label="增加页数"
+                          onClick={() => setPageCount(Math.min(20, pageCount + 1))}
+                          className="w-9 h-9 rounded-lg border border-line bg-white text-ink hover:bg-paper-2 cursor-pointer focus-warm"
+                        >
+                          +
+                        </button>
+                      </div>
+                    </label>
+                  </div>
+                </ConfigSection>
+
+                <ConfigSection title="画风" hint="用于生图；可多选预设，也可补充英文关键词。">
+                  <StylePicker
+                    selected={selectedStyles}
+                    custom={customStyle}
+                    onChange={(sel, c) => {
+                      setSelectedStyles(sel);
+                      setCustomStyle(c);
                     }}
-                    className={`${input} py-1.5`}
                   />
-                </label>
-                <label className="text-xs text-muted flex flex-col gap-1">
-                  标题（可选）
-                  <input
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value)}
-                    className={`${input} py-1.5`}
-                  />
-                </label>
-                <label className="text-xs text-muted flex flex-col gap-1 sm:col-span-2">
-                  画风 / 语气（用于生图）
-                  <input
-                    value={style}
-                    onChange={(e) => setStyle(e.target.value)}
-                    className={`${input} py-1.5`}
-                  />
-                </label>
-                <label className="text-xs text-muted flex flex-col gap-1 sm:col-span-2">
-                  灵感图（可选，用于分页阶段）
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-                    className="block w-full text-xs text-muted cursor-pointer"
-                  />
-                </label>
+                </ConfigSection>
+
+                <ConfigSection title="灵感图" hint="可选，仅用于分页阶段；不参与生图。">
+                  <div className="flex items-start gap-3">
+                    {previewUrl ? (
+                      <button
+                        type="button"
+                        onClick={() => setZoom(previewUrl)}
+                        aria-label="放大查看灵感图"
+                        title="点击放大查看"
+                        className="block w-24 h-24 cursor-zoom-in"
+                      >
+                        <img
+                          src={previewUrl}
+                          alt="灵感图预览"
+                          className="w-24 h-24 object-cover rounded-lg border border-line"
+                        />
+                      </button>
+                    ) : (
+                      <div className="w-24 h-24 flex items-center justify-center text-xs text-muted rounded-lg border border-dashed border-line">
+                        未设置
+                      </div>
+                    )}
+                    <div className="min-w-0 flex flex-col items-start gap-2">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                        className="block w-full text-sm text-muted cursor-pointer"
+                      />
+                      {file && (
+                        <button
+                          type="button"
+                          onClick={() => setFile(null)}
+                          className="text-xs text-muted hover:text-[#b3453a] underline cursor-pointer focus-warm"
+                        >
+                          移除已选图片（{file.name}）
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </ConfigSection>
               </div>
             )}
           </div>
@@ -402,6 +484,7 @@ const NewStoryModal: React.FC<Props> = ({ open, onClose, onCreated }) => {
           </div>
         </footer>
       </div>
+      {zoom && <Lightbox src={zoom} onClose={() => setZoom(null)} />}
     </div>
   );
 };
