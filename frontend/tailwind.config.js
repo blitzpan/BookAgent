@@ -25,7 +25,11 @@ export default {
           2: "#F4ECE0",
           3: "#EBDFCB",
         },
-        muted: "#8C8073",
+        // muted 为装饰性浅色，正文级次要文字用 strong（对纸色底 5.6:1，满足 AA）
+        muted: {
+          DEFAULT: "#8C8073",
+          strong: "#6B6157",
+        },
         // 暖调成功/已配音（替代冷绿 emerald）
         sage: {
           DEFAULT: "#6F8F6B",
