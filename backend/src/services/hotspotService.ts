@@ -20,6 +20,7 @@ import {
 } from "./generationService";
 import { getVisionBackend } from "../providers";
 import { pathToInlineImagePart } from "../providers/util";
+import { logger, timer } from "../logger";
 
 const now = () => new Date().toISOString();
 
@@ -318,6 +319,12 @@ export async function autoGenerateHotspots(
   }
 
   const pages = getPagesByStory(storyId);
+  const t = timer();
+  logger.info("hotspot", "start", {
+    storyId,
+    pages: pages.length,
+    resume,
+  });
   const hasAi = (pageNumber: number): boolean =>
     db
       .prepare(
@@ -401,6 +408,14 @@ export async function autoGenerateHotspots(
       storyId
     );
   }
+  logger.info("hotspot", "summary", {
+    storyId,
+    placed,
+    skipped,
+    failed,
+    pages: pages.length,
+    duration_ms: t.elapsedMs(),
+  });
   return { placed, pages: pages.length, skipped, failed };
 }
 

@@ -20,6 +20,7 @@ import {
   DEFAULT_GENERATION_CONFIG,
   applyConfigPatch,
 } from "../constants/generationConfig";
+import { logger, timer, errMsg } from "../logger";
 
 const now = () => new Date().toISOString();
 
@@ -163,6 +164,14 @@ export async function rewriteStory(storyId: number): Promise<RewriteResult> {
   // 进入改写中
   setStatus(storyId, STORY_STATUS.REWRITING);
 
+  const t = timer();
+  logger.info("rewrite", "start", {
+    storyId,
+    pageCount,
+    style,
+    hasInspiration: Boolean(story.inspiration_image_path),
+  });
+
   let safetyNote: string | null = null;
 
   try {
@@ -179,9 +188,15 @@ export async function rewriteStory(storyId: number): Promise<RewriteResult> {
     }
 
     // 1) refine
+    const tRefine = timer();
     const refine = await refineStoryForPageCount(safeInput, pageCount, style);
     let refinedStory = refine.finalStory;
     const { mode, feedback } = refine;
+    logger.info("rewrite", "refine_done", {
+      storyId,
+      mode,
+      duration_ms: tRefine.elapsedMs(),
+    });
 
     // 1.5) safety 后
     const s1 = await safetyCheckText(refinedStory, "check");
@@ -196,12 +211,18 @@ export async function rewriteStory(storyId: number): Promise<RewriteResult> {
     }
 
     // 2) parse
+    const tParse = timer();
     const parsedPages = await parseStoryIntoPages(
       refinedStory,
       inspirationPath,
       pageCount,
       style
     );
+    logger.info("rewrite", "parse_done", {
+      storyId,
+      pageCount: parsedPages.length,
+      duration_ms: tParse.elapsedMs(),
+    });
 
     // 改写后页数/分段会重排，旧热区的坐标与 label 全部失效（且 label 是旧文本快照），
     // 故在删除 pages 的同时一并清除旧热区，避免阅读端显示错位的热区。返回数量供前端提示。
@@ -275,6 +296,15 @@ export async function rewriteStory(storyId: number): Promise<RewriteResult> {
       }
     }
 
+    logger.info("rewrite", "success", {
+      storyId,
+      mode,
+      pageCount: parsedPages.length,
+      hotspotsRemoved: hotspotCount,
+      safetyFiltered: Boolean(safetyNote),
+      duration_ms: t.elapsedMs(),
+    });
+
     return {
       storyId,
       mode,
@@ -285,6 +315,11 @@ export async function rewriteStory(storyId: number): Promise<RewriteResult> {
     };
   } catch (err) {
     // 改写失败：回退到「新建」（状态机允许 REWRITING -> 新建）
+    logger.error("rewrite", "failure", {
+      storyId,
+      duration_ms: t.elapsedMs(),
+      error: errMsg(err),
+    });
     setStatus(storyId, STORY_STATUS.NEW);
     throw err;
   }

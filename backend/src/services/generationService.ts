@@ -33,6 +33,7 @@ import {
   type GenerationConfig,
 } from "../constants/generationConfig";
 import { getProviderNames } from "../providers";
+import { logger, timer, errMsg } from "../logger";
 import type {
   GenerationRun,
   GenerationTask,
@@ -607,6 +608,22 @@ async function runFrameLoop(
       attemptIndex: attempt,
     });
 
+    // 质量日志：每轮生图都记录打分，便于统计生图效率与合格率。
+    logger.info("image", "attempt", {
+      storyId: ctx.storyId,
+      runId: ctx.runId,
+      taskId: ctx.taskId,
+      pageNumber: page.page_number,
+      attempt,
+      kind: attempt === 1 ? "initial" : "retry",
+      identityScore: Number(identityResult.score ?? 0),
+      frameScore: Number(frameResult.score ?? 0),
+      combinedScore,
+      accepted: combinedScore >= ctx.frameThreshold,
+      threshold: ctx.frameThreshold,
+      issuesCount: combinedIssues.length,
+    });
+
     if (combinedScore > bestScore) {
       bestScore = combinedScore;
       bestRowId = rowId;
@@ -692,6 +709,18 @@ export async function runFullGeneration(taskId: number): Promise<void> {
   setTaskStatus(taskId, "running");
   setRunStatus(run.id, "running");
 
+  const t = timer();
+  const providers = getProviderNames();
+  logger.info("run", "full_start", {
+    storyId: story.id,
+    runId: run.id,
+    taskId,
+    textProvider: providers.text,
+    imageProvider: providers.image,
+    visionProvider: providers.vision,
+    aspectRatio: run.aspect_ratio || DEFAULT_GENERATION_CONFIG.aspect_ratio,
+  });
+
   try {
     const pages = getPagesByStory(story.id);
     if (!pages.length) throw new Error("该故事尚无分页，请先执行改写");
@@ -729,6 +758,7 @@ export async function runFullGeneration(taskId: number): Promise<void> {
 
     let done = 0;
     let failed = 0;
+    let seqScore: number | null = null;
     const frameIssuesAll: string[] = [];
 
     // 取消检查（S16，页级）：被请求取消时，当前页跑完即停，已完成的页保留，状态标 partial_failed 以便「继续生图」。
@@ -794,11 +824,24 @@ export async function runFullGeneration(taskId: number): Promise<void> {
         insertSequenceCheck(run.id, story.id, seqResult);
         if (seqResult.score >= seqThreshold) break;
       }
+      seqScore = seqResult.score;
     }
 
     const status: RunStatus = failed > 0 ? "partial_failed" : "completed";
     finishRun(run.id, status);
     finishTask(taskId, "completed", failed > 0 ? `${failed} 页生成失败` : null);
+
+    logger.info("run", "full_success", {
+      storyId: story.id,
+      runId: run.id,
+      taskId,
+      totalPages: pages.length,
+      done,
+      failed,
+      status,
+      sequenceScore: seqScore,
+      duration_ms: t.elapsedMs(),
+    });
     try {
       setStatus(
         story.id,
@@ -813,6 +856,13 @@ export async function runFullGeneration(taskId: number): Promise<void> {
     const msg = err?.message ?? String(err);
     finishRun(run.id, "failed");
     finishTask(taskId, "failed", msg);
+    logger.error("run", "full_failure", {
+      storyId: run.story_id,
+      runId: run.id,
+      taskId,
+      error: errMsg(err),
+      duration_ms: t.elapsedMs(),
+    });
     try {
       setStatus(story.id, STORY_STATUS.GEN_PARTIAL_FAILED);
     } catch {
@@ -847,6 +897,13 @@ export async function runSinglePage(taskId: number): Promise<void> {
     return;
   }
   setTaskStatus(taskId, "running");
+  const tSingle = timer();
+  logger.info("run", "single_page_start", {
+    storyId: run.story_id,
+    runId: run.id,
+    taskId,
+    pageId,
+  });
 
   try {
     const style = styleToEnglish(story.style);
@@ -916,8 +973,25 @@ export async function runSinglePage(taskId: number): Promise<void> {
       r.bestRowId != null ? "completed" : "failed",
       r.bestRowId != null ? null : "本页未能生成可用候选图"
     );
+    logger.info("run", "single_page_success", {
+      storyId: run.story_id,
+      runId: run.id,
+      taskId,
+      pageId,
+      placed: r.bestRowId != null ? 1 : 0,
+      combinedScore: r.bestScore,
+      duration_ms: tSingle.elapsedMs(),
+    });
   } catch (err: any) {
     finishTask(taskId, "failed", err?.message ?? String(err));
+    logger.error("run", "single_page_failure", {
+      storyId: run.story_id,
+      runId: run.id,
+      taskId,
+      pageId,
+      error: errMsg(err),
+      duration_ms: tSingle.elapsedMs(),
+    });
   }
 }
 
@@ -941,6 +1015,14 @@ export async function runTtsGeneration(taskId: number): Promise<void> {
     return;
   }
   setTaskStatus(taskId, "running");
+  const tTts = timer();
+  logger.info("run", "tts_start", {
+    storyId,
+    taskId,
+    audioSetId,
+    langs: params.langs ?? ["zh", "en"],
+    regenerate: Boolean(params.regenerate),
+  });
   try {
     const { failed } = await runTtsForStory(storyId, audioSetId, {
       langs: params.langs,
@@ -969,10 +1051,24 @@ export async function runTtsGeneration(taskId: number): Promise<void> {
       }
     }
     finishTask(taskId, "completed", failed > 0 ? `${failed} 段合成失败` : null);
+    logger.info("run", "tts_success", {
+      storyId,
+      taskId,
+      audioSetId,
+      failed,
+      duration_ms: tTts.elapsedMs(),
+    });
   } catch (err: any) {
     db.prepare(
       `UPDATE audio_sets SET status = 'failed', updated_at = ? WHERE id = ?`
     ).run(now(), audioSetId);
     finishTask(taskId, "failed", err?.message ?? String(err));
+    logger.error("run", "tts_failure", {
+      storyId,
+      taskId,
+      audioSetId,
+      error: errMsg(err),
+      duration_ms: tTts.elapsedMs(),
+    });
   }
 }

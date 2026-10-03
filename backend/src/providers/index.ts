@@ -21,12 +21,86 @@ import { createSeedreamBackend } from "./seedream";
 import { createArkBackend } from "./ark";
 import { createMockBackend } from "./mock";
 import type { ModelBackend } from "./types";
+import { logger, errMsg, extractUsage } from "../logger";
 
-const gemini = createGeminiBackend();
-const bailian = createBailianBackend();
-const seedream = createSeedreamBackend();
-const ark = createArkBackend();
-const mock = createMockBackend();
+/**
+ * 日志装饰器：包裹任意 ModelBackend，对每一次文本/图像/视觉调用记录
+ * provider、角色、耗时、成功/失败，以及尽力抽取的 token 用量。
+ * 这是"AI 相关"日志的统一入口——所有 provider 的调用都会经过这里。
+ */
+function withLogging(backend: ModelBackend, fallbackRole: "text" | "image" | "vision"): ModelBackend {
+  const origJSON = backend.generateJSON.bind(backend);
+  const origImage = backend.generateImage.bind(backend);
+
+  return {
+    ...backend,
+    async generateJSON(args) {
+      const role = (args.role ?? fallbackRole) as "text" | "vision";
+      const cat = `ai.${role}`;
+      const t0 = Date.now();
+      logger.info(cat, "start", {
+        provider: backend.id,
+        role,
+        parts: (args.parts || []).length,
+      });
+      try {
+        const result = await origJSON(args);
+        const dt = Date.now() - t0;
+        const tokens = extractUsage(result);
+        logger.info(cat, "success", {
+          provider: backend.id,
+          role,
+          duration_ms: dt,
+          ...(tokens != null ? { tokens } : {}),
+        });
+        return result;
+      } catch (err) {
+        const dt = Date.now() - t0;
+        logger.error(cat, "failure", {
+          provider: backend.id,
+          role,
+          duration_ms: dt,
+          error: errMsg(err),
+        });
+        throw err;
+      }
+    },
+    async generateImage(args) {
+      const cat = "ai.image";
+      const t0 = Date.now();
+      logger.info(cat, "start", {
+        provider: backend.id,
+        refCount: (args.referenceDataUrls || []).length,
+        aspectRatio: args.aspectRatio,
+        imageSize: args.imageSize,
+      });
+      try {
+        const result = await origImage(args);
+        const dt = Date.now() - t0;
+        logger.info(cat, "success", {
+          provider: backend.id,
+          duration_ms: dt,
+          bytes: typeof result === "string" ? result.length : undefined,
+        });
+        return result;
+      } catch (err) {
+        const dt = Date.now() - t0;
+        logger.error(cat, "failure", {
+          provider: backend.id,
+          duration_ms: dt,
+          error: errMsg(err),
+        });
+        throw err;
+      }
+    },
+  };
+}
+
+const gemini = withLogging(createGeminiBackend(), "text");
+const bailian = withLogging(createBailianBackend(), "text");
+const seedream = withLogging(createSeedreamBackend(), "image");
+const ark = withLogging(createArkBackend(), "text");
+const mock = withLogging(createMockBackend(), "text");
 
 /** 省钱总开关：MOCK_AI=1（或 true / yes / on）时整个后端零真实 API 调用。 */
 function isMockEnabled(): boolean {

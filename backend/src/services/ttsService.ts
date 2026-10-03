@@ -11,6 +11,7 @@ import path from "node:path";
 import { EdgeTTS } from "edge-tts-universal";
 import { db, DATA_DIR, isCancelRequested, markTaskCancelled } from "../db/sqlite";
 import { getPagesByStory, getStoryRaw } from "./storyService";
+import { logger, timer, errMsg } from "../logger";
 import type { SegmentRole } from "../types";
 
 const now = () => new Date().toISOString();
@@ -251,11 +252,19 @@ export async function runTtsForStory(
 
   const langs = opts.langs && opts.langs.length ? opts.langs : (["zh", "en"] as Lang[]);
   const config = parseConfig(setRow.config_json);
+  const tTts = timer();
 
   db.prepare(`UPDATE audio_sets SET status='generating', updated_at=? WHERE id=?`).run(
     now(),
     audioSetId
   );
+
+  logger.info("tts", "start", {
+    storyId,
+    audioSetId,
+    langs,
+    regenerate: Boolean(opts.regenerate),
+  });
 
   const items = buildWorkItems(storyId);
 
@@ -327,6 +336,7 @@ export async function runTtsForStory(
     }
 
     let synth: { buffer: Buffer; durationMs: number } | null = null;
+    const tSynth = timer();
     if (process.env.TTS_MOCK) {
       synth = { buffer: Buffer.alloc(0), durationMs: 800 };
     } else {
@@ -336,6 +346,16 @@ export async function runTtsForStory(
     }
     if (!synth) {
       failed += 1;
+      logger.error("tts", "synth_failure", {
+        storyId,
+        audioSetId,
+        pageNumber: job.item.pageNumber,
+        segmentId: job.item.segmentId,
+        lang: job.lang,
+        role: job.item.role,
+        voice: job.voice,
+        duration_ms: tSynth.elapsedMs(),
+      });
       opts.onProgress?.(done, total, failed);
       continue;
     }
@@ -346,6 +366,18 @@ export async function runTtsForStory(
     } else {
       fs.writeFileSync(job.absPath, synth.buffer);
     }
+
+    logger.info("tts", "synth_done", {
+      storyId,
+      audioSetId,
+      pageNumber: job.item.pageNumber,
+      segmentId: job.item.segmentId,
+      lang: job.lang,
+      role: job.item.role,
+      voice: job.voice,
+      synth_ms: tSynth.elapsedMs(),
+      audio_ms: synth.durationMs,
+    });
 
     db.prepare(
       `INSERT INTO page_audio
@@ -386,6 +418,16 @@ export async function runTtsForStory(
       storyId
     );
   }
+
+  logger.info("tts", "summary", {
+    storyId,
+    audioSetId,
+    total,
+    ok: done,
+    failed,
+    finalStatus,
+    duration_ms: tTts.elapsedMs(),
+  });
 
   return { ok: done - 0, failed, total };
 }

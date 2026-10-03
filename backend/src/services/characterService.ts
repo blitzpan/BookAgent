@@ -5,6 +5,7 @@ import { db } from "../db/sqlite";
 import { saveSheet, loadSheetDataUrls } from "../storage/imageStore";
 import { extractCharacters, generateImage } from "./geminiService";
 import type { ExtractedCharacter } from "./geminiService";
+import { logger, timer } from "../logger";
 
 const now = () => new Date().toISOString();
 
@@ -68,6 +69,11 @@ export async function ensureAnchors(
   const existing = getCharactersByRun(runId);
   if (existing.length) {
     const chars = attachDataUrls(storyId, existing);
+    logger.info("anchor", "reused", {
+      storyId,
+      runId,
+      count: existing.length,
+    });
     return {
       characters: chars,
       extracted: chars.map((c) => ({
@@ -78,6 +84,7 @@ export async function ensureAnchors(
     };
   }
 
+  const t = timer();
   let extracted = await extractCharacters(sourceText, style);
   if (!extracted || extracted.length === 0) {
     extracted = [
@@ -123,5 +130,12 @@ export async function ensureAnchors(
       dataUrl,
     });
   }
+  logger.info("anchor", "generated", {
+    storyId,
+    runId,
+    extractedCount: extracted.length,
+    anchorsGenerated: created.length,
+    duration_ms: t.elapsedMs(),
+  });
   return { characters: created, extracted };
 }
