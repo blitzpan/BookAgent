@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { LangMode, ReaderPage, ReaderSegment, Hotspot } from "../types";
+import { IconPlay, IconPause, IconVolume, IconStar } from "./icons";
 
 interface Caption {
   lang: string;
@@ -109,18 +110,21 @@ function SegmentList({
           title={hasAudio ? "点击播放该句" : "该语言暂无音频"}
           className={`w-full text-left rounded-lg px-3 py-2 flex items-start gap-2 disabled:opacity-50 ${
             active
-              ? "bg-sky-100 dark:bg-sky-900/40"
-              : "hover:bg-gray-100 dark:hover:bg-gray-700"
+              ? "bg-sky-100"
+              : "hover:bg-gray-100"
           }`}
         >
           {onImg && (
             <span className="shrink-0" title="图上也有热区">
-              📍
+              <IconStar size={14} className="text-amber-600" />
             </span>
           )}
           <span className="flex-1">
             {s.role === "sfx" ? (
-              <span className={segmentStyle("sfx", s.speaker)}>🔊 {s.speaker ?? "音效"}</span>
+              <span className={segmentStyle("sfx", s.speaker)}>
+                <IconVolume size={14} />
+                {s.speaker ?? "音效"}
+              </span>
             ) : (
               <>
                 {lang !== "en" && (
@@ -332,31 +336,31 @@ export default function PageView({ page, lang, fontSize, onEnded }: Props) {
               title={h.label ?? h.type}
               aria-label={h.type}
             >
+              <IconStar size={15} />
               {text}
             </button>
           );
         })}
 
-        {bubble && (
-          <div className="hotspot-bubble">{bubble}</div>
-        )}
+        {bubble && <div className="hotspot-bubble">{bubble}</div>}
 
         {page.audioUrl ? (
           <button
             className="audio-btn"
             onClick={() => new Audio(page.audioUrl).play()}
-            aria-label="播放音频"
+            aria-label="播放整页音频"
+            title="播放整页音频"
           >
-            ▶
+            <IconPlay size={20} />
           </button>
         ) : (
-          <button className="audio-btn audio-btn-disabled" disabled aria-label="暂无音频">
-            ▶
+          <button className="audio-btn audio-btn-disabled" disabled aria-label="暂无整页音频">
+            <IconPlay size={20} />
           </button>
         )}
       </div>
 
-      <div className="page-caption flex-1" style={{ fontSize: `${fontSize}px` }}>
+      <div className="page-caption" style={{ fontSize: `${fontSize}px` }}>
         {/* 优先按分段渲染（角色/场景区分）；无分段时退回整页旁白 */}
         {page.segments && page.segments.length > 0 ? (
           <SegmentList
@@ -376,36 +380,32 @@ export default function PageView({ page, lang, fontSize, onEnded }: Props) {
         )}
       </div>
 
-      {/* 玻璃拟态音频控制条 */}
-      <div className="audio-control glass flex items-center gap-3 px-4 py-2">
+      {/* 音频控制条 */}
+      <div className="audio-control flex items-center gap-3 px-4 py-3">
         <button
           onClick={togglePlay}
           disabled={playlist.length === 0}
-          className="w-10 h-10 rounded-full bg-violet-600 text-white flex items-center justify-center hover:scale-105 transition disabled:opacity-40 disabled:cursor-not-allowed"
+          className="play-btn"
           aria-label={playing ? "暂停" : "播放"}
         >
-          {playing ? "⏸" : "▶"}
+          {playing ? <IconPause size={22} /> : <IconPlay size={22} />}
         </button>
         <div className="flex-1">
-          <div className="flex items-center justify-between text-xs text-gray-600 dark:text-gray-300">
+          <div className="flex items-center justify-between text-xs text-gray-600">
             <span>配音 · {langLabel}</span>
             <span>
               {playlist.length ? `${Math.min(idx + (playing ? 1 : 0), playlist.length)}/${playlist.length}` : "无音频"}
             </span>
           </div>
-          <div className="h-1.5 rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden mt-1">
-            <div
-              className="h-full bg-violet-500 transition-all"
-              style={{ width: `${progress * 100}%` }}
-            />
+          <div className="audio-progress">
+            <div style={{ width: `${progress * 100}%` }} />
           </div>
         </div>
-        <label className="flex items-center gap-1 text-xs text-gray-600 dark:text-gray-300 cursor-pointer select-none">
+        <label className="auto-flip">
           <input
             type="checkbox"
             checked={autoFlip}
             onChange={(e) => setAutoFlip(e.target.checked)}
-            className="accent-violet-600"
           />
           自动翻页
         </label>

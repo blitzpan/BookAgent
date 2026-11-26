@@ -2,8 +2,8 @@ import type { LangMode } from "../types";
 
 const OPTIONS: [LangMode, string][] = [
   ["zh", "中文"],
-  ["en", "English"],
-  ["both", "双语"],
+  ["en", "EN"],
+  ["both", "中英"],
 ];
 
 export default function LangToggle({
