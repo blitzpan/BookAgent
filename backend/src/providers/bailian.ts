@@ -60,7 +60,7 @@ export const createBailianBackend = (): ModelBackend => ({
     }
 
     const cleanedRefs = (args.referenceDataUrls || []).filter(Boolean);
-    const fullPrompt = buildImagePrompt(args.prompt);
+    const fullPrompt = buildImagePrompt(args.prompt, args.referenceRole);
     const size = toQwenSize(args.imageSize);
 
     // 多图参考：把参考图作为 image content 传入（百炼支持 data:...;base64,...）。

@@ -18,6 +18,7 @@ import { DEFAULT_GENERATION_CONFIG } from '../constants';
 import PageCard from './PageCard';
 import AnchorGallery from './AnchorGallery';
 import SpeakerVoicePanel from './SpeakerVoicePanel';
+import CharacterBindingPanel from './CharacterBindingPanel';
 
 interface Props {
   storyId: number;
@@ -69,6 +70,7 @@ function SectionHead({
 
 // 锚点导航（顺序与页面区块顺序一致）
 const SECTION_NAV: { id: string; label: string }[] = [
+  { id: 'sec-roles', label: '角色' },
   { id: 'sec-text', label: '文本' },
   { id: 'sec-image', label: '图像' },
   { id: 'sec-audio', label: '配音' },
@@ -858,6 +860,15 @@ const StoryDetail: React.FC<Props> = ({ storyId, onBack, onChanged, onOpenHotspo
           onClose={() => setListen(null)}
         />
       )}
+
+      <section id="sec-roles" className={SECTION}>
+        <SectionHead title="角色" desc="故事引用的角色：主角/自定义角色选定角色形象；临时角色由生图自动生成。" />
+        <CharacterBindingPanel
+          storyId={storyId}
+          style={story?.style ?? null}
+          disabled={isGenerating || isGeneratingTts || published}
+        />
+      </section>
 
       <section id="sec-text" className={SECTION}>
         <SectionHead

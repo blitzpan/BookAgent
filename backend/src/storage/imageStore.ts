@@ -66,6 +66,37 @@ export function savePageImage(
   );
 }
 
+/** 角色照片专用：assets/characters/{cid}/photos/{photoId}.{ext} */
+export function saveCharacterPhoto(
+  characterId: number,
+  photoId: number,
+  dataUrl: string
+): string {
+  const ext = extFromDataUrl(dataUrl);
+  return writeDataUrl(dataUrl, `assets/characters/${characterId}/photos/${photoId}.${ext}`);
+}
+
+/** 角色形象（锚图）专用：assets/characters/{cid}/sheets/{sheetId}.{ext}（id 进文件名）。 */
+export function saveCharacterSheet(
+  characterId: number,
+  sheetId: number,
+  dataUrl: string
+): string {
+  const ext = extFromDataUrl(dataUrl);
+  return writeDataUrl(dataUrl, `assets/characters/${characterId}/sheets/${sheetId}.${ext}`);
+}
+
+/** 删除一个相对 DATA_DIR 的资源文件（不存在则静默忽略）。 */
+export function removeAsset(relativePath: string | null | undefined): void {
+  if (!relativePath) return;
+  const abs = path.join(DATA_DIR, relativePath);
+  try {
+    if (fs.existsSync(abs)) fs.unlinkSync(abs);
+  } catch {
+    /* 删盘失败不影响主流程 */
+  }
+}
+
 /** 读取某故事全部锚图，返回 { characterId: dataUrl }。 */
 export function loadSheetDataUrls(storyId: number): Record<number, string> {
   const dir = path.join(DATA_DIR, `assets/${storyId}/anchors`);

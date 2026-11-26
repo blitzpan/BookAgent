@@ -141,6 +141,21 @@ export async function initDb(): Promise<void> {
     db.engine = new SQL.Database();
   }
 
+  // 角色体系改版：旧库 characters 仍是「挂 story/run」结构（含 story_id 列），
+  // CREATE TABLE IF NOT EXISTS 不会重建。检测到旧结构则丢弃四张角色相关表并按新 schema 重建。
+  // 开发阶段无用户数据迁移需求，旧角色/锚图数据可丢弃。
+  try {
+    const cols = db.prepare(`PRAGMA table_info(characters)`).all() as Array<{ name?: string }>;
+    if (cols.length > 0 && cols.some((c) => c?.name === "story_id")) {
+      db.exec(`DROP TABLE IF EXISTS story_character_bindings`);
+      db.exec(`DROP TABLE IF EXISTS character_sheets`);
+      db.exec(`DROP TABLE IF EXISTS character_photos`);
+      db.exec(`DROP TABLE IF EXISTS characters`);
+    }
+  } catch {
+    /* 表尚未建好，忽略 */
+  }
+
   // 建表（SQL 与 database设计.md 一致；去掉 WAL pragma，sql.js 不支持）
   const schema = fs.readFileSync(path.join(BACKEND_DIR, "src/db/schema.sql"), "utf-8");
   db.exec(schema);

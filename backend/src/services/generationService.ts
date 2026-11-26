@@ -13,8 +13,10 @@ import {
   getPublishReadiness,
 } from "./storyService";
 import {
-  ensureAnchors,
-  loadSheetMap,
+  loadBoundSheets,
+  ensureAutoCharacters,
+  discoverAutoCharactersFromStory,
+  getBoundCharactersForStory,
 } from "./characterService";
 import {
   generateImage,
@@ -232,12 +234,16 @@ export function listRunsForStory(storyId: number): GenerationRun[] {
 export function getRunDetail(runId: number): any | null {
   const run = getRun(runId);
   if (!run) return null;
-  const characters = db
-    .prepare(
-      `SELECT id, char_key, name, visual_description, sheet_image_path
-       FROM characters WHERE generation_run_id = ? ORDER BY id ASC`
-    )
-    .all(run.id) as any[];
+  // 每 binding 一行（角色形象取绑定选定的那张），形状兼容前端 AnchorGallery。
+  const characters = getBoundCharactersForStory(run.story_id).map(({ binding, character, sheet }) => ({
+    id: character.id,
+    char_key: character.char_key,
+    name: binding.name_in_story || character.name,
+    visual_description: character.visual_description,
+    sheet_image_path: sheet?.sheet_image_path ?? null,
+    category: character.category,
+    role_in_story: binding.role_in_story,
+  }));
   const pages = db
     .prepare(`SELECT * FROM pages WHERE story_id = ? ORDER BY page_number ASC`)
     .all(run.story_id) as Page[];
@@ -728,14 +734,11 @@ export async function runFullGeneration(taskId: number): Promise<void> {
     const style = styleToEnglish(story.style);
     const sourceText = story.refined_text || story.original_text;
 
-    const { extracted } = await ensureAnchors(
-      story.id,
-      run.id,
-      style,
-      sourceText
-    );
-    // ensureAnchors 已落库锚图，重新读取 dataURL 映射
-    const sheetMap = loadSheetMap(story.id);
+    // 新角色体系：先按故事文本发现 auto 临时角色（已有绑定跳过），再补齐其临时锚图，
+    // 最后统一从绑定加载参考图（主角在前）。custom 主角用角色管理里选定的形象。
+    await discoverAutoCharactersFromStory(story.id, style, sourceText);
+    await ensureAutoCharacters(story.id, run.id, style, sourceText);
+    const { extracted, sheetMap } = loadBoundSheets(story.id);
 
     const ctx: GenContext = {
       storyId: story.id,
@@ -908,13 +911,9 @@ export async function runSinglePage(taskId: number): Promise<void> {
   try {
     const style = styleToEnglish(story.style);
     const sourceText = story.refined_text || story.original_text;
-    const { extracted } = await ensureAnchors(
-      story.id,
-      run.id,
-      style,
-      sourceText
-    );
-    const sheetMap = loadSheetMap(story.id);
+    await discoverAutoCharactersFromStory(story.id, style, sourceText);
+    await ensureAutoCharacters(story.id, run.id, style, sourceText);
+    const { extracted, sheetMap } = loadBoundSheets(story.id);
 
     const ctx: GenContext = {
       storyId: story.id,

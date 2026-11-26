@@ -30,15 +30,55 @@ CREATE TABLE IF NOT EXISTS stories (
   deleted_at          TEXT
 );
 
+-- 角色实体：custom（自定义，如孩子）与 auto（系统从故事生成）统一入库，独立于故事与 run。
 CREATE TABLE IF NOT EXISTS characters (
+  id                    INTEGER PRIMARY KEY,
+  char_key              TEXT NOT NULL UNIQUE,      -- 稳定标识，供一致性链路（page_images.reference_sheet_ids 等）使用
+  name                  TEXT NOT NULL,
+  category              TEXT NOT NULL DEFAULT 'auto', -- 'custom' | 'auto'
+  basic_attributes_json TEXT,                      -- JSON：性别/年龄/爱好/生活习惯/过敏
+  visual_description    TEXT,                      -- 生图外貌描述：衣着/眼镜/书包等
+  source_story_id       INTEGER,                   -- auto 角色来源故事；custom 为 NULL
+  created_at            TEXT,
+  updated_at            TEXT,
+  deleted_at            TEXT,
+  FOREIGN KEY (source_story_id) REFERENCES stories(id)
+);
+
+-- 角色照片：仅 custom 角色上传，作为生成角色形象的身份参考图。
+CREATE TABLE IF NOT EXISTS character_photos (
+  id           INTEGER PRIMARY KEY,
+  character_id INTEGER NOT NULL,
+  photo_path   TEXT NOT NULL,                      -- assets/characters/{cid}/photos/{id}.jpg
+  created_at   TEXT,
+  FOREIGN KEY (character_id) REFERENCES characters(id)
+);
+
+-- 角色形象（锚图）：一个角色多张，按画风区分；文件名含 id，替换换新 id 以绕开 immutable 缓存。
+CREATE TABLE IF NOT EXISTS character_sheets (
+  id                    INTEGER PRIMARY KEY,
+  character_id          INTEGER NOT NULL,
+  style                 TEXT NOT NULL,             -- 中文画风标签，与 STYLE_EN 键一致
+  sheet_image_path      TEXT NOT NULL,             -- assets/characters/{cid}/sheets/{id}.png
+  source_photo_ids_json TEXT,                      -- JSON:[photo_id]
+  prompt_used           TEXT,
+  created_at            TEXT,
+  FOREIGN KEY (character_id) REFERENCES characters(id)
+);
+
+-- 故事 ↔ 角色 绑定：本书用了哪些角色、用哪张形象、称呼与来源。
+CREATE TABLE IF NOT EXISTS story_character_bindings (
   id                  INTEGER PRIMARY KEY,
   story_id            INTEGER NOT NULL,
-  generation_run_id   INTEGER NOT NULL,           -- 锚图挂 run(锚图 run 概念)
-  char_key            TEXT,
-  name                TEXT,
-  visual_description  TEXT,
-  sheet_image_path    TEXT,                       -- assets/{story_id}/anchors/{id}.png
-  FOREIGN KEY (story_id) REFERENCES stories(id)
+  character_id        INTEGER NOT NULL,
+  character_sheet_id  INTEGER,                     -- custom/主角必填；auto 可空
+  role_in_story       TEXT NOT NULL DEFAULT 'supporting', -- 'protagonist' | 'supporting'
+  name_in_story       TEXT,
+  source              TEXT NOT NULL DEFAULT 'user', -- 'user'(人工) | 'auto'(生图自动建)
+  created_at          TEXT,
+  FOREIGN KEY (story_id) REFERENCES stories(id),
+  FOREIGN KEY (character_id) REFERENCES characters(id),
+  FOREIGN KEY (character_sheet_id) REFERENCES character_sheets(id)
 );
 
 CREATE TABLE IF NOT EXISTS pages (
@@ -235,7 +275,10 @@ CREATE TABLE IF NOT EXISTS page_hotspots (
 );
 CREATE INDEX IF NOT EXISTS idx_hotspots_story ON page_hotspots(story_id, page_number);
 
-CREATE INDEX IF NOT EXISTS idx_characters_story ON characters(story_id, generation_run_id);
+CREATE INDEX IF NOT EXISTS idx_characters_category ON characters(category, deleted_at);
+CREATE INDEX IF NOT EXISTS idx_photos_character ON character_photos(character_id);
+CREATE INDEX IF NOT EXISTS idx_sheets_character_style ON character_sheets(character_id, style);
+CREATE INDEX IF NOT EXISTS idx_bindings_story ON story_character_bindings(story_id, source);
 CREATE INDEX IF NOT EXISTS idx_pages_story ON pages(story_id);
 CREATE INDEX IF NOT EXISTS idx_page_images_run ON page_images(generation_run_id, page_id);
 CREATE INDEX IF NOT EXISTS idx_runs_story ON generation_runs(story_id);

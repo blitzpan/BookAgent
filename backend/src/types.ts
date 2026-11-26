@@ -26,14 +26,59 @@ export interface Story {
   deleted_at: string | null;
 }
 
+/** 角色基本属性（性别/年龄/爱好/生活习惯/过敏等），既用于生成角色形象也用于编故事。 */
+export interface CharacterBasicAttributes {
+  gender?: string;
+  age?: number | string;
+  hobbies?: string[];
+  habits?: string[];
+  allergies?: string[];
+  [key: string]: unknown;
+}
+
+/** 角色实体：custom（用户定义，如孩子）与 auto（系统从故事生成）统一入库。 */
 export interface Character {
   id: number;
-  story_id: number;
-  generation_run_id: number;
-  char_key: string | null;
-  name: string | null;
+  char_key: string;
+  name: string;
+  category: "custom" | "auto";
+  basic_attributes_json: string | null;
   visual_description: string | null;
-  sheet_image_path: string | null;
+  source_story_id: number | null;
+  created_at: string | null;
+  updated_at: string | null;
+  deleted_at: string | null;
+}
+
+/** 角色照片（identity 参考图）。 */
+export interface CharacterPhoto {
+  id: number;
+  character_id: number;
+  photo_path: string;
+  created_at: string | null;
+}
+
+/** 角色形象（锚图）：一个角色多张，按画风区分。 */
+export interface CharacterSheet {
+  id: number;
+  character_id: number;
+  style: string;
+  sheet_image_path: string;
+  source_photo_ids_json: string | null;
+  prompt_used: string | null;
+  created_at: string | null;
+}
+
+/** 故事 ↔ 角色绑定。 */
+export interface StoryCharacterBinding {
+  id: number;
+  story_id: number;
+  character_id: number;
+  character_sheet_id: number | null;
+  role_in_story: "protagonist" | "supporting";
+  name_in_story: string | null;
+  source: "user" | "auto";
+  created_at: string | null;
 }
 
 export interface Page {
@@ -159,6 +204,7 @@ export interface CreateStoryInput {
   target_page_count?: number;
   user_title?: string;
   inspiration_image_path?: string;
+  characterIds?: number[];
 }
 
 // 生图配置的一次性覆盖（POST /generate 请求体，可选；缺省读 stories.generation_config）。

@@ -47,7 +47,7 @@ export const createArkBackend = (): ModelBackend => ({
     }
 
     const cleanedRefs = (args.referenceDataUrls || []).filter(Boolean);
-    const fullPrompt = buildImagePrompt(args.prompt);
+    const fullPrompt = buildImagePrompt(args.prompt, args.referenceRole);
     const size = pickSize(args.aspectRatio);
 
     const body: Record<string, unknown> = {

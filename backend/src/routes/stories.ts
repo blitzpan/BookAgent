@@ -8,6 +8,7 @@ import {
   getPublishReadiness,
   getSegmentCount,
   softDelete,
+  getAffectedBindingsForStyle,
 } from "../services/storyService";
 import { STORY_STATUS } from "../constants/status";
 import { mergeGenerationConfig } from "../constants/generationConfig";
@@ -17,6 +18,7 @@ import {
   generateStoryFromTheme,
   optimizeStory,
 } from "../services/geminiService";
+import { buildProtagonistContextFromIds } from "../services/characterService";
 
 // 自由文本入参上限：提示词层的「边界」只是软防护，代码层再兜一道，
 // 避免超长输入撑爆上下文或被用来注入指令。
@@ -31,24 +33,31 @@ export function registerStoryRoutes(app: FastifyInstance): void {
       target_page_count?: number;
       user_title?: string;
       inspiration_image?: string; // 可选 dataURL
+      characterIds?: number[];
     };
     if (!body?.original_text || !body.original_text.trim()) {
       return reply.code(400).send({ error: "original_text 不能为空" });
     }
-    const result = createStory({
-      original_text: body.original_text,
-      style: body.style,
-      target_page_count: body.target_page_count,
-      user_title: body.user_title,
-      inspiration_image_path: body.inspiration_image,
-    });
-    return reply.code(201).send(result);
+    try {
+      const result = createStory({
+        original_text: body.original_text,
+        style: body.style,
+        target_page_count: body.target_page_count,
+        user_title: body.user_title,
+        inspiration_image_path: body.inspiration_image,
+        characterIds: body.characterIds,
+      });
+      return reply.code(201).send(result);
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      return reply.code(msg.includes("角色形象") || msg.includes("角色不存在") ? 409 : 400).send({ error: msg });
+    }
   });
 
   // 草稿旁路（不落库）：主题 → 完整故事。与改写共用 TEXT 后端。
   // 只收主题：页数归「改写」，画风归「生图」，标题属于故事属性，都不在此处使用。
   app.post("/api/story-draft/generate", async (req, reply) => {
-    const body = req.body as { theme?: string };
+    const body = req.body as { theme?: string; characterIds?: number[] };
     if (!body?.theme || !body.theme.trim()) {
       return reply.code(400).send({ error: "theme 不能为空" });
     }
@@ -56,7 +65,8 @@ export function registerStoryRoutes(app: FastifyInstance): void {
       return reply.code(400).send({ error: `theme 过长（上限 ${MAX_DRAFT_INPUT} 字符）` });
     }
     try {
-      const { story } = await generateStoryFromTheme(body.theme);
+      const characterContext = buildProtagonistContextFromIds(body.characterIds);
+      const { story } = await generateStoryFromTheme(body.theme, characterContext);
       return reply.send({ story });
     } catch (err: any) {
       return reply.code(400).send({ error: err?.message ?? String(err) });
@@ -214,11 +224,13 @@ export function registerStoryRoutes(app: FastifyInstance): void {
 
     try {
       const updated = updateStory(id, body);
+      const effectiveStyle = body.style !== undefined ? body.style : updated.style;
       return {
         story: {
           ...updated,
           generation_config: mergeGenerationConfig(updated.generation_config),
         },
+        affectedBindings: getAffectedBindingsForStyle(id, effectiveStyle),
       };
     } catch (err: any) {
       return reply.code(400).send({ error: err?.message ?? String(err) });

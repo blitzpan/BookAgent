@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from "react";
-import { api } from "../api/client";
+import { api, assetUrl } from "../api/client";
+import type { CharacterView } from "../types";
 import { joinStyle } from "../style";
 import { MagicWandIcon } from "./icons/MagicWandIcon";
 import ConfigSection from "./ConfigSection";
 import StylePicker from "./StylePicker";
 import Lightbox from "./Lightbox";
 
-const DEFAULT_STYLE = "whimsical, cute, soft-color children's picture-book style";
+const DEFAULT_STYLE = ""; // 画风统一用中文预设（见 style.ts / 后端 STYLE_EN），留空由用户选，避免与角色形象画风不一致
 
 function readAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -79,6 +80,10 @@ const NewStoryModal: React.FC<Props> = ({ open, onClose, onCreated }) => {
   const [formErr, setFormErr] = useState<string | null>(null);
   const [genErr, setGenErr] = useState<string | null>(null);
   const [optErr, setOptErr] = useState<string | null>(null);
+  // 主角（角色先行）：从角色库选 custom 角色，默认第一个有角色形象的角色。
+  const [characters, setCharacters] = useState<CharacterView[]>([]);
+  const [selectedCharacterId, setSelectedCharacterId] = useState<number | null>(null);
+  const [noCharacterHint, setNoCharacterHint] = useState(false);
 
   // Esc 关闭（生成/优化/提交进行中不响应，避免误关丢失内容）
   useEffect(() => {
@@ -89,6 +94,16 @@ const NewStoryModal: React.FC<Props> = ({ open, onClose, onCreated }) => {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open, busy, genBusy, optBusy, onClose]);
+
+  // 载入自定义角色供选主角（角色先行）
+  useEffect(() => {
+    if (!open) return;
+    api.listCharacters({ category: "custom" }).then((r) => {
+      const withSheet = r.characters.filter((c) => c.sheets.length > 0);
+      setCharacters(withSheet);
+      setSelectedCharacterId((prev) => prev ?? withSheet[0]?.id ?? null);
+    }).catch(() => setCharacters([]));
+  }, [open]);
 
   // 灵感图本地预览：Object URL 需显式释放，避免内存泄漏
   useEffect(() => {
@@ -112,7 +127,10 @@ const NewStoryModal: React.FC<Props> = ({ open, onClose, onCreated }) => {
     setGenBusy(true);
     setGenErr(null);
     try {
-      const r = await api.generateStory({ theme });
+      const r = await api.generateStory({
+        theme,
+        characterIds: selectedCharacterId ? [selectedCharacterId] : undefined,
+      });
       setText(r.story);
       // 换了一篇故事，之前累积的修改要求不再适用
       setAppliedFeedbacks([]);
@@ -166,6 +184,7 @@ const NewStoryModal: React.FC<Props> = ({ open, onClose, onCreated }) => {
         target_page_count: pageCount,
         user_title: title || undefined,
         inspiration_image: inspiration,
+        characterIds: selectedCharacterId ? [selectedCharacterId] : undefined,
       });
       setText("");
       setTheme("");
@@ -232,8 +251,41 @@ const NewStoryModal: React.FC<Props> = ({ open, onClose, onCreated }) => {
         {/* 内容区滚动 */}
         <div className="flex-1 overflow-y-auto px-6 py-5">
           <div className="grid gap-5 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-            {/* 左栏：AI 辅助（主题生成 + 多轮优化） */}
+            {/* 左栏：AI 辅助（主角 + 主题生成 + 多轮优化） */}
             <div className="flex flex-col gap-4 min-w-0">
+              <section className={`${card} flex flex-col gap-2`}>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-display text-sm font-bold text-ink">⓪ 选择主角</h3>
+                  <span className="text-[11px] px-1.5 py-0.5 rounded bg-brand-soft text-brand">角色先行</span>
+                </div>
+                {characters.length === 0 ? (
+                  <p className="text-xs text-muted leading-relaxed">
+                    还没有可使用的角色。请先在「角色管理」创建人物并生成角色形象，故事将围绕他展开。
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {characters.map((c) => (
+                      <button
+                        key={c.id}
+                        onClick={() => { setSelectedCharacterId(c.id); setNoCharacterHint(false); }}
+                        className={`flex items-center gap-2 px-2 py-1.5 rounded-lg border text-sm cursor-pointer focus-warm ${
+                          selectedCharacterId === c.id ? "border-brand bg-brand/10 text-brand" : "border-line bg-white text-ink"
+                        }`}
+                      >
+                        {c.sheets[0]?.url && (
+                          <img src={assetUrl(c.sheets[0].url) ?? ""} alt="" className="w-7 h-7 rounded object-cover" />
+                        )}
+                        {c.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {selectedCharacterId && (() => {
+                  const c = characters.find((x) => x.id === selectedCharacterId);
+                  return c ? <p className="text-[11px] text-muted">将把「{c.name}」的性别、年龄、爱好、习惯、过敏等属性注入故事，并作为主角。</p> : null;
+                })()}
+              </section>
+
               <section className={`${card} flex flex-col gap-2`}>
                 <div className="flex items-center gap-2">
                   <h3 className="font-display text-sm font-bold text-ink">① 主题与要求</h3>
@@ -410,7 +462,7 @@ const NewStoryModal: React.FC<Props> = ({ open, onClose, onCreated }) => {
                   </div>
                 </ConfigSection>
 
-                <ConfigSection title="画风" hint="用于生图；可多选预设，也可补充英文关键词。">
+                <ConfigSection title="画风" hint="用于生图；请选中文预设（与角色形象画风一致），否则主角需先生成该画风的形象。">
                   <StylePicker
                     selected={selectedStyles}
                     custom={customStyle}

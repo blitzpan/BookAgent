@@ -9,6 +9,7 @@ import { Type } from "@google/genai";
 import { db } from "../db/sqlite";
 import { getTextBackend } from "../providers";
 import { getVoicePool } from "./voicePoolService";
+import { getCharacterDescriptionsForStory } from "./characterService";
 import {
   FALLBACK_VOICE,
   enVoiceFor,
@@ -117,9 +118,7 @@ function collectSpeakers(storyId: number): SpeakerStat[] {
     if (st.samples.length < 3 && s.text_zh) st.samples.push(s.text_zh.trim().slice(0, 40));
   }
 
-  const chars = db
-    .prepare(`SELECT name, visual_description FROM characters WHERE story_id = ?`)
-    .all(storyId) as Array<{ name: string | null; visual_description: string | null }>;
+  const chars = getCharacterDescriptionsForStory(storyId);
   for (const st of map.values()) {
     const hit = chars.find(
       (c) => c.name && (c.name === st.speaker || c.name.includes(st.speaker) || st.speaker.includes(c.name))

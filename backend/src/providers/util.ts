@@ -42,12 +42,22 @@ export const pathToInlineImagePart = (filePath: string) => {
  * 因为图像模型会整体复刻参考图构图，导致第 N 页复制第 N-1 页。
  * 多个后端（Gemini / Seedream / Ark / Bailian）共用，保证 prompt 口径一致。
  */
-export const buildImagePrompt = (prompt: string): string =>
-  `REFERENCE ROLES (must follow):\n` +
-  `- All reference images are CHARACTER SHEETS. You MUST match their species, fur/skin colors, clothing, and accessories exactly.\n` +
-  `- If the story text conflicts with the refs, keep character appearance consistent with the CHARACTER SHEETS.\n\n` +
-  `${prompt}\n` +
-  `IMPORTANT: Follow the page text literally. Do not invent extra major objects or characters.\n`;
+export const buildImagePrompt = (
+  prompt: string,
+  referenceRole: "style" | "identity" = "style"
+): string =>
+  referenceRole === "identity"
+    ? `REFERENCE ROLES (must follow):\n` +
+      `- ALL reference images are PHOTOS OF THE SAME REAL PERSON. Preserve their facial identity, bone structure,_age, and distinctive features exactly.\n` +
+      `- Redraw this person as an ILLUSTRATED CHARACTER in the target style — NOT a photo. The photos define WHO, the style defines HOW.\n` +
+      `- Clothing, accessories and colors come from the profile text below, not from the photos.\n\n` +
+      `${prompt}\n` +
+      `IMPORTANT: This is a character sheet for a children's picture book. Clean background, full body, child-safe.\n`
+    : `REFERENCE ROLES (must follow):\n` +
+      `- All reference images are CHARACTER SHEETS. You MUST match their species, fur/skin colors, clothing, and accessories exactly.\n` +
+      `- If the story text conflicts with the refs, keep character appearance consistent with the CHARACTER SHEETS.\n\n` +
+      `${prompt}\n` +
+      `IMPORTANT: Follow the page text literally. Do not invent extra major objects or characters.\n`;
 
 /** dataURL 或远程 URL -> dataURL（供 Seedream / Ark 图像接口使用）。 */
 export async function toDataUrl(input: string): Promise<string> {

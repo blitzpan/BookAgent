@@ -22,10 +22,12 @@ export interface GenerateJSONArgs {
 export interface GenerateImageArgs {
   /** 完整 prompt（已包含 REFERENCE ROLES 说明）。 */
   prompt: string;
-  /** 参考图 dataURL 数组，约定 [0]=风格参考，[1..]=角色锚图。调用方已按 maxRefs 截断。 */
+  /** 参考图 dataURL 数组。默认约定 [0]=风格参考，[1..]=角色锚图；identity 模式下全部为同一人物的身份参考。调用方已按 maxRefs 截断。 */
   referenceDataUrls: string[];
   aspectRatio?: string;
   imageSize?: string;
+  /** 'style'(默认)=旧约定；'identity'=所有参考图都是同一真人的照片，用于生成角色形象。 */
+  referenceRole?: "style" | "identity";
 }
 
 export interface ModelBackend {

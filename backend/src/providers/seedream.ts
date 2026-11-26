@@ -35,7 +35,7 @@ export const createSeedreamBackend = (): ModelBackend => ({
     }
 
     const cleanedRefs = (args.referenceDataUrls || []).filter(Boolean);
-    const fullPrompt = buildImagePrompt(args.prompt);
+    const fullPrompt = buildImagePrompt(args.prompt, args.referenceRole);
 
     const size =
       args.aspectRatio === "16:9"

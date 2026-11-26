@@ -19,6 +19,7 @@ import {
 import { runTask } from "../services/taskRunner";
 import { writeDataUrl } from "../storage/imageStore";
 import { requestCancel } from "../db/sqlite";
+import { validateBindingsForGeneration } from "../services/characterService";
 import type { GenerateConfig } from "../types";
 
 const now = () => new Date().toISOString();
@@ -37,6 +38,15 @@ export function registerRunRoutes(app: FastifyInstance): void {
     // 参数：故事配置为准，请求体仅为一次性覆盖
     const cfg = mergeGenerationConfig(story.generation_config);
     const effective = { ...cfg, ...(body || {}) };
+
+    // D2：主角/自定义角色必须有当前画风的形象，否则拒绝生图（不改状态）。
+    const blocked = validateBindingsForGeneration(id, story.style);
+    if (blocked.length) {
+      return reply.code(409).send({
+        error: `以下角色缺少当前画风的角色形象，请先到角色管理生成：${blocked.map((b) => `${b.name}（${b.reason}）`).join("、")}`,
+        blocked,
+      });
+    }
 
     try {
       setStatus(id, STORY_STATUS.GENERATING);

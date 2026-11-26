@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api, assetUrl } from '../api/client';
 import { DEFAULT_GENERATION_CONFIG } from '../constants';
 import { joinStyle, parseStyle } from '../style';
@@ -91,6 +92,9 @@ const StoryConfigPanel: React.FC<Props> = ({ story, onSaved }) => {
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [zoom, setZoom] = useState<string | null>(null);
+  const [affected, setAffected] = useState<
+    Array<{ characterId: number; characterName: string; reason: string }>
+  >([]);
 
   useEffect(() => {
     setUserTitle(story.user_title ?? '');
@@ -116,15 +120,20 @@ const StoryConfigPanel: React.FC<Props> = ({ story, onSaved }) => {
       let inspiration_image: string | undefined;
       if (file) inspiration_image = await readAsDataUrl(file);
       const styleValue = joinStyle(selectedStyles, customStyle);
-      await api.updateStory(story.id, {
+      const res = await api.updateStory(story.id, {
         user_title: userTitle,
         style: styleValue,
         target_page_count: pageCount,
         generation_config: gen,
         ...(inspiration_image ? { inspiration_image } : {}),
       });
+      setAffected(res.affectedBindings ?? []);
       setFile(null);
-      setMsg('配置已保存，将在下次改写/生图时生效。');
+      setMsg(
+        (res.affectedBindings?.length ?? 0) > 0
+          ? '画风已更新，但有角色缺少对应画风的形象，生图前请先补齐。'
+          : '配置已保存，将在下次改写/生图时生效。'
+      );
       onSaved();
     } catch (e: any) {
       setErr(e?.message ?? String(e));
@@ -140,6 +149,20 @@ const StoryConfigPanel: React.FC<Props> = ({ story, onSaved }) => {
       <p className="text-xs text-muted mb-4">
         修改后需重新「改写」才会按新画风/页数重排分页脚本；灵感图只影响分页阶段。
       </p>
+
+      {affected.length > 0 && (
+        <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 text-amber-900 p-3 text-sm">
+          <p className="font-medium">以下角色缺少当前画风的角色形象，生图前请先补齐：</p>
+          <ul className="mt-1.5 list-disc list-inside space-y-0.5">
+            {affected.map((a) => (
+              <li key={a.characterId}>{a.characterName} — {a.reason}</li>
+            ))}
+          </ul>
+          <Link to="/characters" className="inline-block mt-2 text-brand underline hover:opacity-80">
+            前往角色管理生成 →
+          </Link>
+        </div>
+      )}
 
       {/* 基础信息 */}
       <ConfigSection title="基础信息">

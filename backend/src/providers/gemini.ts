@@ -5,20 +5,26 @@ import { GoogleGenAI } from "@google/genai";
 import type { GenerateJSONArgs, GenerateImageArgs, ModelBackend, Part } from "./types";
 import { buildImagePrompt, dataUrlToInlineImagePart } from "./util";
 
-const API_KEY =
-  process.env.API_KEY || process.env.GEMINI_API_KEY || "fallback_api_key_for_dev";
-
-if (!API_KEY || API_KEY === "fallback_api_key_for_dev") {
-  console.warn(
-    "[gemini] API_KEY / GEMINI_API_KEY 未设置，将使用 fallback 占位 key（生成会失败）。请在 .env.local 配置 GEMINI_API_KEY。"
-  );
-}
-
 const TEXT_MODEL = process.env.GEMINI_TEXT_MODEL || "gemini-3-pro-preview";
 const VISION_MODEL = process.env.GEMINI_VISION_MODEL || "gemini-3-pro-preview";
 const IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || "gemini-3-pro-image-preview";
 
-const ai = new GoogleGenAI({ apiKey: API_KEY });
+// 懒加载：仅在真正调用 gemini backend 时才构造客户端 / 打印警告。
+// 这样全 mock（MOCK_AI=1 或分角色 mock）模式下不会触发任何 gemini 初始化噪音，
+// 模块导入本身保持零副作用。
+let _ai: GoogleGenAI | null = null;
+function getAi(): GoogleGenAI {
+  if (_ai) return _ai;
+  const API_KEY =
+    process.env.API_KEY || process.env.GEMINI_API_KEY || "fallback_api_key_for_dev";
+  if (!API_KEY || API_KEY === "fallback_api_key_for_dev") {
+    console.warn(
+      "[gemini] API_KEY / GEMINI_API_KEY 未设置，将使用 fallback 占位 key（生成会失败）。请在 .env.local 配置 GEMINI_API_KEY。"
+    );
+  }
+  _ai = new GoogleGenAI({ apiKey: API_KEY });
+  return _ai;
+}
 
 export const createGeminiBackend = (): ModelBackend => ({
   id: "gemini",
@@ -28,7 +34,7 @@ export const createGeminiBackend = (): ModelBackend => ({
 
   async generateJSON(args: GenerateJSONArgs): Promise<any> {
     const model = args.role === "vision" ? VISION_MODEL : TEXT_MODEL;
-    const response = await ai.models.generateContent({
+    const response = await getAi().models.generateContent({
       model,
       contents: { parts: args.parts },
       config: {
@@ -42,10 +48,11 @@ export const createGeminiBackend = (): ModelBackend => ({
 
   async generateImage(args: GenerateImageArgs): Promise<string> {
     const cleanedRefs = (args.referenceDataUrls || []).filter(Boolean);
-    const styleRef = cleanedRefs.length > 0 ? cleanedRefs[0] : null;
-    const characterRefs = cleanedRefs.length > 1 ? cleanedRefs.slice(1) : [];
+    const identity = args.referenceRole === "identity";
+    const styleRef = !identity && cleanedRefs.length > 0 ? cleanedRefs[0] : null;
+    const characterRefs = identity ? cleanedRefs : cleanedRefs.length > 1 ? cleanedRefs.slice(1) : [];
 
-    const fullPrompt = buildImagePrompt(args.prompt);
+    const fullPrompt = buildImagePrompt(args.prompt, args.referenceRole);
 
     const parts: Part[] = [];
     if (styleRef) {
@@ -53,7 +60,11 @@ export const createGeminiBackend = (): ModelBackend => ({
       parts.push(dataUrlToInlineImagePart(styleRef));
     }
     if (characterRefs.length) {
-      parts.push({ text: "[CHARACTER REFERENCE IMAGES — match identity exactly]" });
+      parts.push({
+        text: identity
+          ? "[IDENTITY REFERENCE PHOTOS — same real person, match facial identity]"
+          : "[CHARACTER REFERENCE IMAGES — match identity exactly]",
+      });
       for (const d of characterRefs) parts.push(dataUrlToInlineImagePart(d));
     }
     parts.push({ text: fullPrompt });
@@ -62,7 +73,7 @@ export const createGeminiBackend = (): ModelBackend => ({
     const imageSize = args.imageSize || "2K";
 
     try {
-      const response = await ai.models.generateContent({
+      const response = await getAi().models.generateContent({
         model: IMAGE_MODEL,
         contents: parts as any,
         config: {
@@ -85,7 +96,7 @@ export const createGeminiBackend = (): ModelBackend => ({
       // 兜底：无参考图时退回到 generateImages（旧路径）。
       if (cleanedRefs.length === 0) {
         try {
-          const response = await ai.models.generateImages({
+          const response = await getAi().models.generateImages({
             model: IMAGE_MODEL,
             prompt: args.prompt,
             config: {

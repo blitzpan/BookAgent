@@ -8,7 +8,7 @@ import {
   STORY_STATUS,
   assertStoryTransition,
 } from "../constants/status";
-import { styleToEnglish } from "../constants/style";
+import { styleToEnglish, stylesMatch, styleTokens } from "../constants/style";
 import type { CreateStoryInput, Page, Story } from "../types";
 import {
   refineStoryForPageCount,
@@ -16,6 +16,7 @@ import {
   safetyCheckText,
 } from "./geminiService";
 import { saveInspiration } from "../storage/imageStore";
+import { buildProtagonistContext, purgeOrphanAutoCharacters } from "./characterService";
 import {
   DEFAULT_GENERATION_CONFIG,
   applyConfigPatch,
@@ -113,6 +114,38 @@ export function createStory(input: CreateStoryInput): CreateStoryResult {
       `UPDATE stories SET generation_config = ? WHERE id = ?`
     ).run(JSON.stringify(DEFAULT_GENERATION_CONFIG), id);
 
+    // 角色绑定（B3：与建故事同事务，失败整体回滚）。第一个为主角。
+    // 自定义角色/主角必须有当前画风的角色形象，否则整体回滚（B1）。
+    const characterIds = Array.isArray(input.characterIds) ? input.characterIds : [];
+    characterIds.forEach((cid, idx) => {
+      const ch = db
+        .prepare(`SELECT id, name, category FROM characters WHERE id = ? AND deleted_at IS NULL`)
+        .get(cid) as { id: number; name: string; category: string } | undefined;
+      if (!ch) throw new Error(`角色不存在: ${cid}`);
+      const isProtagonist = idx === 0;
+      const needSheet = isProtagonist || ch.category === "custom";
+      let sheetId: number | null = null;
+      if (needSheet) {
+        const sheet = db
+          .prepare(`SELECT id, style FROM character_sheets WHERE character_id = ? ORDER BY id DESC`)
+          .all(cid) as Array<{ id: number; style: string }>;
+        // 未指定画风 → 取最新形象；已指定 → 用统一规范化语义匹配。
+        const match =
+          styleTokens(input.style).length === 0
+            ? sheet[0]
+            : sheet.find((s) => stylesMatch(s.style, input.style));
+        if (!match) {
+          throw new Error(`「${ch.name}」没有当前画风的角色形象，请先在角色管理生成`);
+        }
+        sheetId = match.id;
+      }
+      db.prepare(
+        `INSERT INTO story_character_bindings
+          (story_id, character_id, character_sheet_id, role_in_story, name_in_story, source, created_at)
+         VALUES (?, ?, ?, ?, ?, 'user', ?)`
+      ).run(id, ch.id, sheetId, isProtagonist ? "protagonist" : "supporting", ch.name, now());
+    });
+
     let inspiration_image_path: string | undefined;
     if (input.inspiration_image_path) {
       // 前端传 dataURL 字符串，落盘
@@ -187,9 +220,10 @@ export async function rewriteStory(storyId: number): Promise<RewriteResult> {
       safetyNote = `安全过滤：已调整为适合儿童的内容。原因: ${s0.reasons.join("; ")}`;
     }
 
-    // 1) refine
+    // 1) refine（注入主角档案，改写不丢主角设定）
     const tRefine = timer();
-    const refine = await refineStoryForPageCount(safeInput, pageCount, style);
+    const characterContext = buildProtagonistContext(storyId);
+    const refine = await refineStoryForPageCount(safeInput, pageCount, style, characterContext);
     let refinedStory = refine.finalStory;
     const { mode, feedback } = refine;
     logger.info("rewrite", "refine_done", {
@@ -242,6 +276,8 @@ export async function rewriteStory(storyId: number): Promise<RewriteResult> {
       db.prepare(`DELETE FROM pages WHERE story_id = ?`).run(storyId);
       db.prepare(`DELETE FROM page_segments WHERE story_id = ?`).run(storyId);
       db.prepare(`DELETE FROM page_hotspots WHERE story_id = ?`).run(storyId);
+      // A3：改写重排分页后，auto 临时角色的绑定基于旧文本已失效，清除（custom/主角绑定保留）
+      db.prepare(`DELETE FROM story_character_bindings WHERE story_id = ? AND source = 'auto'`).run(storyId);
       for (const p of parsedPages) {
         const info = db
           .prepare(
@@ -284,6 +320,9 @@ export async function rewriteStory(storyId: number): Promise<RewriteResult> {
       );
     });
     tx();
+
+    // P1-3：回收改写后无任何绑定的孤儿 auto 角色（避免角色库无限膨胀）
+    purgeOrphanAutoCharacters(storyId);
 
     // S18：删盘（DB 删除成功后），失败只记日志，不影响主流程
     for (const r of staleImages) {
@@ -336,6 +375,34 @@ export interface UpdateStoryInput {
   target_page_count?: number | null;
   inspiration_image?: string; // 可选 dataURL，传入则覆盖灵感图
   generation_config?: unknown; // 生图参数补丁（部分更新，见 constants/generationConfig）
+}
+
+/** 换画风后，列出无对应画风角色形象的角色（供前端强提示）。 */
+export function getAffectedBindingsForStyle(id: number, style: string | null): Array<{
+  characterId: number;
+  characterName: string;
+  reason: string;
+}> {
+  const rows = db
+    .prepare(
+      `SELECT b.character_id AS cid, c.name AS cname
+       FROM story_character_bindings b
+       JOIN characters c ON c.id = b.character_id AND c.deleted_at IS NULL
+       WHERE b.story_id = ? AND (b.role_in_story = 'protagonist' OR c.category = 'custom')`
+    )
+    .all(id) as Array<{ cid: number; cname: string }>;
+  return rows
+    .filter((r) => {
+      const sheets = db
+        .prepare(`SELECT style FROM character_sheets WHERE character_id = ?`)
+        .all(r.cid) as Array<{ style: string }>;
+      return !sheets.some((s) => stylesMatch(s.style, style));
+    })
+    .map((r) => ({
+      characterId: r.cid,
+      characterName: r.cname,
+      reason: `无「${style || "默认"}」画风的角色形象`,
+    }));
 }
 
 /** 更新故事级配置（标题 / 画风 / 目标页数 / 灵感图）；只影响后续改写与生图。 */

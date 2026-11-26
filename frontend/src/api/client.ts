@@ -17,6 +17,10 @@ import type {
   SpeakerVoice,
   CastSlot,
   VoicePoolStats,
+  CharacterView,
+  CharacterPhotoView,
+  CharacterBinding,
+  CharacterBasicAttributes,
 } from '../types';
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -27,13 +31,22 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   });
   if (!res.ok) {
     let msg = `请求失败 (${res.status})`;
+    let payload: any = null;
     try {
       const j = await res.json();
+      payload = j;
       if (j && j.error) msg = j.error;
     } catch {
       /* ignore */
     }
-    throw new Error(msg);
+    // 保留后端的结构化错误字段（如 needReplace / characterId），供调用方分支处理。
+    const err = new Error(msg) as Error & Record<string, unknown>;
+    if (payload && typeof payload === "object") {
+      for (const [k, v] of Object.entries(payload)) {
+        if (k !== "error") err[k] = v;
+      }
+    }
+    throw err;
   }
   const text = await res.text();
   return (text ? JSON.parse(text) : {}) as T;
@@ -64,9 +77,10 @@ export const api = {
     target_page_count?: number;
     user_title?: string;
     inspiration_image?: string;
+    characterIds?: number[];
   }) => request<{ id: number }>('POST', '/api/stories', input),
   // ===== 草稿旁路：主题生成 / 多轮优化（不落库，纯文本生成）=====
-  generateStory: (input: { theme: string }) =>
+  generateStory: (input: { theme: string; characterIds?: number[] }) =>
     request<{ story: string }>('POST', '/api/story-draft/generate', input),
   optimizeStory: (input: {
     story: string;
@@ -86,7 +100,10 @@ export const api = {
       inspiration_image?: string;
       generation_config?: Partial<GenerationConfig>;
     }
-  ) => request<{ story: Story }>('PATCH', `/api/stories/${id}`, body),
+  ) => request<{
+    story: Story;
+    affectedBindings?: Array<{ characterId: number; characterName: string; reason: string }>;
+  }>('PATCH', `/api/stories/${id}`, body),
   rewriteStory: (id: number) =>
     request<{
       storyId: number;
@@ -258,4 +275,69 @@ export const api = {
         }>;
       }>;
     }>('GET', `/api/stories/${storyId}/hotspot-editor`),
+
+  // ===== 角色管理（角色先行）=====
+  listCharacters: (filter?: { category?: 'custom' | 'auto'; q?: string }) => {
+    const qs = new URLSearchParams();
+    if (filter?.category) qs.set('category', filter.category);
+    if (filter?.q) qs.set('q', filter.q);
+    const q = qs.toString();
+    return request<{ characters: CharacterView[] }>(
+      'GET',
+      `/api/characters${q ? `?${q}` : ''}`
+    );
+  },
+  createCharacter: (input: {
+    name: string;
+    category?: 'custom' | 'auto';
+    visualDescription?: string;
+    basicAttributes?: CharacterBasicAttributes;
+  }) => request<{ character: CharacterView }>('POST', '/api/characters', input),
+  getCharacter: (id: number) =>
+    request<{ character: CharacterView }>('GET', `/api/characters/${id}`),
+  updateCharacter: (
+    id: number,
+    patch: {
+      name?: string;
+      visualDescription?: string;
+      basicAttributes?: CharacterBasicAttributes;
+      category?: 'custom' | 'auto';
+    }
+  ) => request<{ character: CharacterView }>('PATCH', `/api/characters/${id}`, patch),
+  deleteCharacter: (id: number) =>
+    request<{ ok: true }>('DELETE', `/api/characters/${id}`),
+  listCharacterPhotos: (id: number) =>
+    request<{ photos: CharacterPhotoView[] }>('GET', `/api/characters/${id}/photos`),
+  addCharacterPhotos: (id: number, images: string[]) =>
+    request<{ photos: CharacterPhotoView[] }>('POST', `/api/characters/${id}/photos`, { images }),
+  deleteCharacterPhoto: (id: number, photoId: number) =>
+    request<{ ok: true }>('DELETE', `/api/characters/${id}/photos/${photoId}`),
+  generateCharacterSheet: (
+    id: number,
+    input: { style: string; photoIds: number[]; extraPrompt?: string },
+    replace = false
+  ) =>
+    request<{ sheet: { id: number; style: string; url: string }; replaced: boolean }>(
+      'POST',
+      `/api/characters/${id}/sheets${replace ? '?replace=1' : ''}`,
+      input
+    ),
+  deleteCharacterSheet: (id: number, sheetId: number) =>
+    request<{ ok: true }>('DELETE', `/api/characters/${id}/sheets/${sheetId}`),
+  getCharacterBindings: (storyId: number) =>
+    request<{ bindings: CharacterBinding[] }>('GET', `/api/stories/${storyId}/character-bindings`),
+  putCharacterBindings: (
+    storyId: number,
+    bindings: Array<{
+      characterId: number;
+      sheetId?: number | null;
+      roleInStory?: 'protagonist' | 'supporting';
+      nameInStory?: string;
+    }>
+  ) =>
+    request<{ bindings: CharacterBinding[] }>(
+      'PUT',
+      `/api/stories/${storyId}/character-bindings`,
+      { bindings }
+    ),
 };

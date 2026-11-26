@@ -76,7 +76,7 @@ describe("生图配置与生成闸门", () => {
     db.prepare(`UPDATE stories SET status = '改写完成待生图' WHERE id = ?`).run(storyId);
   });
 
-  it("整书生图完成后禁止再次生图", async () => {
+  it("整书生图完成后可再次生图（续跑复用同一 run，不新建版本）", async () => {
     const g = await app.inject({
       method: "POST",
       url: `/api/stories/${storyId}/generate`,
@@ -92,16 +92,18 @@ describe("生图配置与生成闸门", () => {
       await new Promise((r) => setTimeout(r, 20));
     }
 
+    // 状态机允许「生图完成待发布 → 生图中」：发布前可反复打磨，故再次生图为合法 201。
     const again = await app.inject({
       method: "POST",
       url: `/api/stories/${storyId}/generate`,
     });
-    expect(again.statusCode).toBe(409);
+    expect(again.statusCode).toBe(201);
+    expect(again.json().runId).toBe(runId); // 续跑复用当前版本，不新建 run
 
     const runs = await app.inject({
       method: "GET",
       url: `/api/stories/${storyId}/runs`,
     });
-    expect(runs.json().runs.length).toBe(1); // 始终只有一个版本
+    expect(runs.json().runs.length).toBe(1); // 续跑始终复用同一版本
   });
 });

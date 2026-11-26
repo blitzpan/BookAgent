@@ -34,3 +34,29 @@ export function styleToEnglish(raw?: string | null): string {
     .filter(Boolean);
   return parts.map((p) => STYLE_EN[p] ?? p).join(", ");
 }
+
+/** 把库里存的画风串拆成规范化 token 集合：中文标签→英文，去空白去重。全项目画风匹配的唯一语义来源。 */
+export function styleTokens(raw?: string | null): string[] {
+  if (!raw || !raw.trim()) return [];
+  const out: string[] = [];
+  for (const p of raw.split(/[，,、]/)) {
+    const t = p.trim();
+    if (!t) continue;
+    const en = (STYLE_EN[t] ?? t).trim();
+    if (en && !out.includes(en)) out.push(en);
+  }
+  return out;
+}
+
+/**
+ * 角色形象的画风是否匹配故事画风。
+ * - 故事未指定画风（tokens 为空）→ 放行（走默认画风，无强制匹配）；
+ * - 否则：双方规范 token 有交集即匹配（支持故事多画风 / 形象单画风）。
+ */
+export function stylesMatch(sheetStyle: string | null | undefined, storyStyle: string | null | undefined): boolean {
+  const storyTokens = styleTokens(storyStyle);
+  if (storyTokens.length === 0) return true;
+  const sheetTokens = styleTokens(sheetStyle);
+  if (sheetTokens.length === 0) return false;
+  return sheetTokens.some((s) => storyTokens.includes(s));
+}

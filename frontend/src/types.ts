@@ -205,6 +205,59 @@ export interface Character {
   sheet_image_path: string | null;
 }
 
+// ===================== 角色管理（角色先行）=====================
+export interface CharacterBasicAttributes {
+  gender?: string;
+  age?: number | string;
+  hobbies?: string[];
+  habits?: string[];
+  allergies?: string[];
+  [key: string]: unknown;
+}
+
+export interface CharacterSheetView {
+  id: number;
+  style: string;
+  url: string;
+  promptUsed: string | null;
+  sourcePhotoIds: number[];
+  createdAt: string | null;
+}
+
+/** 角色管理列表/详情视图（后端 CharacterView）。 */
+export interface CharacterView {
+  id: number;
+  charKey: string;
+  name: string;
+  category: 'custom' | 'auto';
+  basicAttributes: CharacterBasicAttributes;
+  visualDescription: string | null;
+  sourceStoryId: number | null;
+  sheets: CharacterSheetView[];
+  photoCount: number;
+  createdAt: string | null;
+}
+
+export interface CharacterPhotoView {
+  id: number;
+  url: string;
+}
+
+/** 故事 ↔ 角色绑定（GET/PUT /api/stories/:id/character-bindings）。 */
+export interface CharacterBinding {
+  id: number;
+  characterId: number;
+  characterName: string;
+  category: 'custom' | 'auto';
+  charKey: string;
+  sheetId: number | null;
+  sheetUrl: string | null;
+  sheetStyle: string | null;
+  roleInStory: 'protagonist' | 'supporting';
+  nameInStory: string | null;
+  source: 'user' | 'auto';
+}
+
 export interface PageDetail {
   page: Page;
   default_image: PageImage | null;
