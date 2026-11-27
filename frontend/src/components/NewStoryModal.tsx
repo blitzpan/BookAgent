@@ -83,6 +83,8 @@ const NewStoryModal: React.FC<Props> = ({ open, onClose, onCreated }) => {
   // 主角（角色先行）：从角色库选 custom 角色，默认第一个有角色形象的角色。
   const [characters, setCharacters] = useState<CharacterView[]>([]);
   const [selectedCharacterId, setSelectedCharacterId] = useState<number | null>(null);
+  // 生成草稿时使用的主角：换主角后需重新生成，否则正文与插画的主角会不一致
+  const [draftCharacterId, setDraftCharacterId] = useState<number | null>(null);
   const [noCharacterHint, setNoCharacterHint] = useState(false);
 
   // Esc 关闭（生成/优化/提交进行中不响应，避免误关丢失内容）
@@ -130,8 +132,10 @@ const NewStoryModal: React.FC<Props> = ({ open, onClose, onCreated }) => {
       const r = await api.generateStory({
         theme,
         characterIds: selectedCharacterId ? [selectedCharacterId] : undefined,
+        targetPageCount: pageCount,
       });
       setText(r.story);
+      setDraftCharacterId(selectedCharacterId);
       // 换了一篇故事，之前累积的修改要求不再适用
       setAppliedFeedbacks([]);
     } catch (e: any) {
@@ -146,6 +150,11 @@ const NewStoryModal: React.FC<Props> = ({ open, onClose, onCreated }) => {
       setOptErr("请先输入或生成故事原文");
       return;
     }
+    // 兜底：草稿主角与当前选中主角不一致时，不带着错主角去优化
+    if (draftCharacterId !== null && draftCharacterId !== selectedCharacterId) {
+      setOptErr("当前故事的主角已变更，请重新生成后再优化");
+      return;
+    }
     if (!feedback.trim()) {
       setOptErr("请填写修改要求");
       return;
@@ -157,6 +166,7 @@ const NewStoryModal: React.FC<Props> = ({ open, onClose, onCreated }) => {
         story: text,
         feedback,
         applied_feedback: appliedFeedbacks,
+        characterIds: selectedCharacterId ? [selectedCharacterId] : undefined,
       });
       setText(r.story);
       setAppliedFeedbacks([...appliedFeedbacks, feedback]);
@@ -190,6 +200,7 @@ const NewStoryModal: React.FC<Props> = ({ open, onClose, onCreated }) => {
       setTheme("");
       setFeedback("");
       setAppliedFeedbacks([]);
+      setDraftCharacterId(null);
       setFile(null);
       setTitle("");
       setSelectedStyles([]);
@@ -267,8 +278,31 @@ const NewStoryModal: React.FC<Props> = ({ open, onClose, onCreated }) => {
                     {characters.map((c) => (
                       <button
                         key={c.id}
-                        onClick={() => { setSelectedCharacterId(c.id); setNoCharacterHint(false); }}
-                        className={`flex items-center gap-2 px-2 py-1.5 rounded-lg border text-sm cursor-pointer focus-warm ${
+                        disabled={busy || genBusy || optBusy}
+                        onClick={() => {
+                          // 已按旧主角生成过草稿时，换主角会让正文与插画角色不一致，确认后清空草稿重新生成
+                          if (
+                            text.trim() &&
+                            draftCharacterId !== null &&
+                            draftCharacterId !== c.id &&
+                            !window.confirm(
+                              `当前故事是按「${characters.find((x) => x.id === draftCharacterId)?.name ?? "原主角"}」生成的。换成「${c.name}」需要清空草稿重新生成，确认吗？`
+                            )
+                          ) return;
+                          setSelectedCharacterId(c.id);
+                          setNoCharacterHint(false);
+                          if (draftCharacterId !== null && draftCharacterId !== c.id) {
+                            setText("");
+                            setFeedback("");
+                            setAppliedFeedbacks([]);
+                            setDraftCharacterId(null);
+                            setGenErr(null);
+                            setOptErr(null);
+                          }
+                        }}
+                        className={`flex items-center gap-2 px-2 py-1.5 rounded-lg border text-sm focus-warm disabled:opacity-50 disabled:cursor-not-allowed ${
+                          busy || genBusy || optBusy ? "cursor-not-allowed" : "cursor-pointer"
+                        } ${
                           selectedCharacterId === c.id ? "border-brand bg-brand/10 text-brand" : "border-line bg-white text-ink"
                         }`}
                       >
@@ -315,7 +349,7 @@ const NewStoryModal: React.FC<Props> = ({ open, onClose, onCreated }) => {
                   {genBusy ? "AI 生成中…" : "AI 生成故事"}
                 </button>
                 <p className="text-[11px] text-muted leading-relaxed">
-                  生成结果会填入右侧「故事原文」，可继续编辑或直接提交。
+                  起草篇幅参考当前页数（{pageCount} 页约 {pageCount * 90} 字）。生成结果会填入右侧「故事原文」，可继续编辑或直接提交。
                 </p>
                 {genErr && err(genErr)}
               </section>
@@ -349,7 +383,7 @@ const NewStoryModal: React.FC<Props> = ({ open, onClose, onCreated }) => {
                 {appliedFeedbacks.length > 0 && (
                   <div className="space-y-1">
                     <p className="text-[11px] text-muted">
-                      已应用 {appliedFeedbacks.length} 条优化，会一并传给 AI 保持不变：
+                      已应用 {appliedFeedbacks.length} 条优化，最近 5 条会持续传给 AI 保持不变：
                     </p>
                     <ul className="flex flex-wrap gap-1.5">
                       {appliedFeedbacks.map((f, i) => (

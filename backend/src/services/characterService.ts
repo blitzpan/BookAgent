@@ -624,27 +624,49 @@ export async function discoverAutoCharactersFromStory(
   return { created };
 }
 
+/** 主角档案正文：草稿生成 / 多轮优化 / 落库改写三处共用，避免阶段间描述漂移。 */
+function formatCharacterBrief(
+  name: string,
+  attrs: CharacterBasicAttributes,
+  visualDescription?: string | null
+): string {
+  const lines: string[] = [`姓名：${String(name).slice(0, 30)}`];
+  if (attrs.gender) lines.push(`性别：${String(attrs.gender).slice(0, 10)}`);
+  if (attrs.age !== undefined && attrs.age !== "") {
+    lines.push(`年龄：${String(attrs.age).slice(0, 10)} 岁`);
+  }
+  const list = (key: "hobbies" | "habits" | "allergies", label: string) => {
+    const v = attrs[key];
+    if (Array.isArray(v) && v.length) {
+      lines.push(`${label}：${v.slice(0, 5).map((x) => String(x).slice(0, 40)).join("、")}`);
+    }
+  };
+  list("hobbies", "爱好");
+  list("habits", "生活习惯与性格");
+  list("allergies", "过敏/需注意");
+  if (visualDescription) {
+    lines.push(`外貌与随身物品：${String(visualDescription).slice(0, 300)}`);
+  }
+  return lines.join("\n");
+}
+
+/** 拼成附在 systemInstruction 末尾的主角档案块。 */
+function characterBriefBlock(body: string): string {
+  return (
+    `\n\n【本书主角档案（必须体现在故事里）】\n${body}\n` +
+    `要求：姓名、性别、年龄、外貌主特征必须与档案一致；从爱好、生活习惯与性格中选 1–2 项自然融入情节，` +
+    `不要生硬罗列；过敏/需注意只作为日常照顾的小细节（例如准备安全的食物），不渲染恐惧；` +
+    `外貌与随身物品中的标志性特征（如颜色、配饰）至少在文中自然出现一次，以便与插画一致。`
+  );
+}
+
 /** 由角色 id 列表拼主角档案（草稿旁路用，此时故事尚未落库）；第一个为主角。 */
 export function buildProtagonistContextFromIds(characterIds?: number[]): string {
   if (!Array.isArray(characterIds) || !characterIds.length) return "";
   const ch = getCharacter(intOrZero(characterIds[0]));
   if (!ch) return "";
-  const attrs = parseAttributes(ch.basic_attributes_json);
-  const lines: string[] = [`名字：${ch.name}`];
-  if (attrs.gender) lines.push(String(attrs.gender));
-  if (attrs.age !== undefined && attrs.age !== "") lines.push(`${attrs.age} 岁`);
-  const list = (key: "hobbies" | "habits" | "allergies", label: string) => {
-    const v = attrs[key];
-    if (Array.isArray(v) && v.length) lines.push(`${label}：${v.join("、")}`);
-  };
-  list("hobbies", "爱好");
-  list("habits", "生活习惯与性格");
-  list("allergies", "过敏/需注意");
-  if (ch.visual_description) lines.push(`外貌与随身物品：${ch.visual_description}`);
-  return (
-    `\n\n【本书主角档案（必须体现在故事里）】\n${lines.join("\n")}\n` +
-    `要求：把主角自然融入情节，让上述属性变成具体、温暖、适合 3–8 岁儿童的生活情境，` +
-    `不要生硬罗列；涉及过敏/习惯的内容要正面化解，不渲染恐惧。`
+  return characterBriefBlock(
+    formatCharacterBrief(ch.name, parseAttributes(ch.basic_attributes_json), ch.visual_description)
   );
 }
 
@@ -660,21 +682,8 @@ export function buildProtagonistContext(storyId: number): string {
   if (!prot) return "";
   const attrs = parseAttributes(prot.character.basic_attributes_json);
   const name = prot.binding.name_in_story || prot.character.name;
-  const lines: string[] = [`名字：${name}`];
-  if (attrs.gender) lines.push(String(attrs.gender));
-  if (attrs.age !== undefined && attrs.age !== "") lines.push(`${attrs.age} 岁`);
-  const list = (key: "hobbies" | "habits" | "allergies", label: string) => {
-    const v = attrs[key];
-    if (Array.isArray(v) && v.length) lines.push(`${label}：${v.join("、")}`);
-  };
-  list("hobbies", "爱好");
-  list("habits", "生活习惯与性格");
-  list("allergies", "过敏/需注意");
-  if (prot.character.visual_description) lines.push(`外貌与随身物品：${prot.character.visual_description}`);
-  return (
-    `\n\n【本书主角档案（必须体现在故事里）】\n${lines.join("\n")}\n` +
-    `要求：把主角自然融入情节，让上述属性变成具体、温暖、适合 3–8 岁儿童的生活情境，` +
-    `不要生硬罗列；涉及过敏/习惯的内容要正面化解，不渲染恐惧。`
+  return characterBriefBlock(
+    formatCharacterBrief(name, attrs, prot.character.visual_description)
   );
 }
 

@@ -57,16 +57,33 @@ export function registerStoryRoutes(app: FastifyInstance): void {
   // 草稿旁路（不落库）：主题 → 完整故事。与改写共用 TEXT 后端。
   // 只收主题：页数归「改写」，画风归「生图」，标题属于故事属性，都不在此处使用。
   app.post("/api/story-draft/generate", async (req, reply) => {
-    const body = req.body as { theme?: string; characterIds?: number[] };
+    const body = req.body as {
+      theme?: string;
+      characterIds?: number[];
+      targetPageCount?: number;
+    };
     if (!body?.theme || !body.theme.trim()) {
       return reply.code(400).send({ error: "theme 不能为空" });
     }
     if (body.theme.length > MAX_DRAFT_INPUT) {
       return reply.code(400).send({ error: `theme 过长（上限 ${MAX_DRAFT_INPUT} 字符）` });
     }
+    // 页数只作为起草篇幅目标；非法值直接拒绝，避免用户误填导致正文长度异常。
+    if (
+      body.targetPageCount !== undefined &&
+      (!Number.isInteger(body.targetPageCount) ||
+        body.targetPageCount < 1 ||
+        body.targetPageCount > 20)
+    ) {
+      return reply.code(400).send({ error: "targetPageCount 必须是 1–20 的整数" });
+    }
     try {
       const characterContext = buildProtagonistContextFromIds(body.characterIds);
-      const { story } = await generateStoryFromTheme(body.theme, characterContext);
+      const { story } = await generateStoryFromTheme(
+        body.theme,
+        characterContext,
+        body.targetPageCount ?? 6
+      );
       return reply.send({ story });
     } catch (err: any) {
       return reply.code(400).send({ error: err?.message ?? String(err) });
@@ -79,6 +96,7 @@ export function registerStoryRoutes(app: FastifyInstance): void {
       story?: string;
       feedback?: string;
       applied_feedback?: unknown;
+      characterIds?: number[];
     };
     if (!body?.story || !body.story.trim()) {
       return reply.code(400).send({ error: "story 不能为空" });
@@ -94,7 +112,9 @@ export function registerStoryRoutes(app: FastifyInstance): void {
       ? body.applied_feedback.filter((x): x is string => typeof x === "string").slice(-5)
       : [];
     try {
-      const { story } = await optimizeStory(body.story, body.feedback, applied);
+      // 多轮优化同样锁定主角：否则「加个朋友」「换个写法」容易把主角写跑偏。
+      const characterContext = buildProtagonistContextFromIds(body.characterIds);
+      const { story } = await optimizeStory(body.story, body.feedback, applied, characterContext);
       return reply.send({ story });
     } catch (err: any) {
       return reply.code(400).send({ error: err?.message ?? String(err) });

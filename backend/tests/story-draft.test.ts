@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../src/app";
 import { initDb } from "../src/db/sqlite";
@@ -157,5 +157,109 @@ describe("新建故事：主题生成 + 多轮优化（草稿旁路）", () => {
     });
     expect(rw.statusCode).toBe(200);
     expect(rw.json().pageCount).toBe(6);
+  });
+
+  // ===== 主角档案在「生成 / 多轮优化」两阶段的注入：内部系统只防流程误用 =====
+
+  async function makeCharacter(name: string): Promise<number> {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/characters",
+      payload: {
+        name,
+        category: "custom",
+        visualDescription: "戴红围巾的小刺猬",
+        basicAttributes: {
+          gender: "女",
+          age: 5,
+          hobbies: ["画画"],
+          habits: ["早起"],
+          allergies: ["花生"],
+        },
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    return res.json().character.id;
+  }
+
+  /** 捕获最近一次 TEXT 调用的 systemInstruction，验证提示词真的带上了主角信息。 */
+  function captureSystem(): () => string {
+    const spy = vi.spyOn(getTextBackend(), "generateJSON");
+    return () => {
+      const calls = spy.mock.calls;
+      const last = calls[calls.length - 1];
+      return String((last?.[0] as any)?.systemInstruction ?? "");
+    };
+  }
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("生成：主角档案进入提示词，字段带标签，且包含主角一致性规则", async () => {
+    const cid = await makeCharacter("阿栗");
+    const system = captureSystem();
+    const { status } = await generate({ theme: "一次春游", characterIds: [cid] });
+    expect(status).toBe(200);
+    const prompt = system();
+    expect(prompt).toContain("【本书主角档案（必须体现在故事里）】");
+    expect(prompt).toContain("姓名：阿栗");
+    expect(prompt).toContain("性别：女");
+    expect(prompt).toContain("年龄：5 岁");
+    expect(prompt).toContain("过敏/需注意：花生");
+    expect(prompt).toContain("外貌与随身物品：戴红围巾的小刺猬");
+    expect(prompt).toContain("主角一致性");
+  });
+
+  it("生成：未选主角时不注入档案（原流程不变）", async () => {
+    const system = captureSystem();
+    const { status } = await generate({ theme: "小狐狸找星星" });
+    expect(status).toBe(200);
+    expect(system()).not.toContain("【本书主角档案");
+  });
+
+  it("生成：页数影响起草目标字数", async () => {
+    const short = captureSystem();
+    await generate({ theme: "小狐狸找星星", targetPageCount: 2 });
+    expect(short()).toContain("180 字左右");
+
+    vi.restoreAllMocks();
+    const long = captureSystem();
+    await generate({ theme: "小狐狸找星星", targetPageCount: 12 });
+    expect(long()).toContain("1080 字左右");
+  });
+
+  it("入参校验：非法 targetPageCount 返回 400", async () => {
+    const a = await generate({ theme: "小狐狸找星星", targetPageCount: 0 });
+    expect(a.status).toBe(400);
+    expect(String(a.body.error)).toContain("targetPageCount");
+    const b = await generate({ theme: "小狐狸找星星", targetPageCount: 21 });
+    expect(b.status).toBe(400);
+  });
+
+  it("优化：主角档案进入提示词，且主角锁定优先级高于本轮修改要求", async () => {
+    const cid = await makeCharacter("阿栗");
+    const system = captureSystem();
+    const { status } = await optimize({
+      story: "小刺猬阿栗去春游。",
+      feedback: "把主角换成小猫",
+      characterIds: [cid],
+    });
+    expect(status).toBe(200);
+    const prompt = system();
+    expect(prompt).toContain("【本书主角档案（必须体现在故事里）】");
+    expect(prompt).toContain("姓名：阿栗");
+    expect(prompt).toContain("主角锁定");
+    expect(prompt.indexOf("主角锁定")).toBeLessThan(
+      prompt.indexOf("本轮修改要求：在满足前三条")
+    );
+  });
+
+  it("优化：未传 characterIds 时不注入档案（兼容老调用）", async () => {
+    const system = captureSystem();
+    const { status } = await optimize({
+      story: "小熊在河边捡到一颗发光的石头。",
+      feedback: "加一句心理描写",
+    });
+    expect(status).toBe(200);
+    expect(system()).not.toContain("【本书主角档案");
   });
 });
