@@ -448,7 +448,7 @@ const NewStoryModal: React.FC<Props> = ({ open, onClose, onCreated }) => {
             {showCfg && (
               <div className="mt-2 p-4 rounded-xl2 border border-line bg-paper">
                 <p className="text-xs text-muted mb-4 leading-relaxed">
-                  页数只影响「改写」分页；画风与灵感图在生图 / 分页阶段生效，创建后仍可在详情页「图像配置」里改。
+                  页数会影响 AI 起草篇幅，并在改写阶段按该页数精确分页；标题只用于展示。画风与灵感图不参与「AI 生成故事 / AI 优化故事」正文生成：画风用于角色形象匹配和后续生图，灵感图用于改写分页时生成每页画面提示词。创建后仍可在详情页「图像配置」里改。
                 </p>
                 <ConfigSection title="基础信息">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -496,7 +496,7 @@ const NewStoryModal: React.FC<Props> = ({ open, onClose, onCreated }) => {
                   </div>
                 </ConfigSection>
 
-                <ConfigSection title="画风" hint="用于生图；请选中文预设（与角色形象画风一致），否则主角需先生成该画风的形象。">
+                <ConfigSection title="画风" hint="不参与故事正文生成；用于角色形象匹配和后续生图。请选中文预设，与角色形象画风一致。">
                   <StylePicker
                     selected={selectedStyles}
                     custom={customStyle}
@@ -507,7 +507,7 @@ const NewStoryModal: React.FC<Props> = ({ open, onClose, onCreated }) => {
                   />
                 </ConfigSection>
 
-                <ConfigSection title="灵感图" hint="可选，仅用于分页阶段；不参与生图。">
+                <ConfigSection title="灵感图" hint="可选，不参与故事正文生成，也不直接作为生图参考图；仅在改写分页时供 AI 参考，用来影响每页的画面提示词。">
                   <div className="flex items-start gap-3">
                     {previewUrl ? (
                       <button

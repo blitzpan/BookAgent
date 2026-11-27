@@ -147,7 +147,7 @@ const StoryConfigPanel: React.FC<Props> = ({ story, onSaved }) => {
   return (
     <div>
       <p className="text-xs text-muted mb-4">
-        修改后需重新「改写」才会按新画风/页数重排分页脚本；灵感图只影响分页阶段。
+        标题只用于展示；页数用于改写时按该页数精确分页（新建故事时还作为 AI 起草篇幅参考），保存后需重新「改写」才会生效。画风与灵感图不参与「AI 生成故事 / AI 优化故事」正文生成：画风用于角色形象匹配和后续生图，灵感图用于改写分页时生成每页画面提示词。
       </p>
 
       {affected.length > 0 && (
@@ -165,7 +165,10 @@ const StoryConfigPanel: React.FC<Props> = ({ story, onSaved }) => {
       )}
 
       {/* 基础信息 */}
-      <ConfigSection title="基础信息">
+      <ConfigSection
+        title="基础信息"
+        hint="标题只用于展示；页数用于改写时按该页数精确分页，保存后需重新「改写」才会生效。"
+      >
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <label className="text-sm text-muted flex flex-col gap-1">
             标题
@@ -209,16 +212,20 @@ const StoryConfigPanel: React.FC<Props> = ({ story, onSaved }) => {
             </div>
           </label>
         </div>
-        <div className="mt-2">
-          <StylePicker
-            selected={selectedStyles}
-            custom={customStyle}
-            onChange={(sel, c) => {
-              setSelectedStyles(sel);
-              setCustomStyle(c);
-            }}
-          />
-        </div>
+      </ConfigSection>
+
+      <ConfigSection
+        title="画风"
+        hint="不参与故事正文生成；用于角色形象匹配和后续生图。请选中文预设，与角色形象画风一致。"
+      >
+        <StylePicker
+          selected={selectedStyles}
+          custom={customStyle}
+          onChange={(sel, c) => {
+            setSelectedStyles(sel);
+            setCustomStyle(c);
+          }}
+        />
       </ConfigSection>
 
       {/* 生图质量 */}
@@ -328,7 +335,10 @@ const StoryConfigPanel: React.FC<Props> = ({ story, onSaved }) => {
       </ConfigSection>
 
       {/* 灵感图 */}
-      <ConfigSection title="灵感图" hint="可选，仅用于分页阶段；不参与生图。">
+      <ConfigSection
+        title="灵感图"
+        hint="可选，不参与故事正文生成，也不直接作为生图参考图；仅在改写分页时供 AI 参考，用来影响每页的画面提示词。"
+      >
         <div className="flex items-start gap-3">
           {inspirationUrl ? (
             <button
