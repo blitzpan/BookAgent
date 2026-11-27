@@ -56,6 +56,10 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 // "assets/..." 形式。因此去掉开头的 "assets/" 再拼 /assets/ 前缀，避免 assets/assets 双重前缀导致 404。
 export function assetUrl(rel?: string | null): string | null {
   if (!rel) return null;
+  // 幂等：后端部分接口（角色照片/形象/绑定）返回的已是完整 /assets/... URL，
+  // 直接透传；数据库原始路径是 assets/...（无前导斜杠），才需要拼前缀。
+  // 之前对 /assets/... 再拼一次会产生 /assets//assets/... → 404 裂图。
+  if (rel.startsWith('/assets/')) return rel;
   const stripped = rel.replace(/^assets[/\\]/, '');
   return `/assets/${stripped}`;
 }

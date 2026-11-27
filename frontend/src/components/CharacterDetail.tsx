@@ -150,10 +150,18 @@ export default function CharacterDetail({ characterId, onBack }: Props) {
             <input value={name} onChange={(e) => setName(e.target.value)} className="px-3 py-2 border border-line rounded-lg bg-paper text-ink focus-warm" />
           </label>
           <label className="text-sm text-muted flex flex-col gap-1">性别
-            <input value={gender} onChange={(e) => setGender(e.target.value)} placeholder="如：女" className="px-3 py-2 border border-line rounded-lg bg-paper text-ink focus-warm" />
+            <select value={gender} onChange={(e) => setGender(e.target.value)} className="px-3 py-2 border border-line rounded-lg bg-paper text-ink focus-warm">
+              <option value="">未指定</option>
+              {["男", "女", "其他"].map((g) => (
+                <option key={g} value={g}>{g}</option>
+              ))}
+              {gender && !["男", "女", "其他"].includes(gender) && (
+                <option value={gender}>{gender}</option>
+              )}
+            </select>
           </label>
           <label className="text-sm text-muted flex flex-col gap-1">年龄
-            <input value={age} onChange={(e) => setAge(e.target.value)} placeholder="如：5" className="px-3 py-2 border border-line rounded-lg bg-paper text-ink focus-warm" />
+            <input type="number" min={0} max={120} value={age} onChange={(e) => setAge(e.target.value)} placeholder="如：5" className="px-3 py-2 border border-line rounded-lg bg-paper text-ink focus-warm" />
           </label>
           <label className="text-sm text-muted flex flex-col gap-1">爱好（顿号分隔）
             <input value={hobbies} onChange={(e) => setHobbies(e.target.value)} placeholder="画画、看蚂蚁" className="px-3 py-2 border border-line rounded-lg bg-paper text-ink focus-warm" />
